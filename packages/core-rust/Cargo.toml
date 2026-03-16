@@ -5,8 +5,7 @@ edition = "2021"
 description = "Core Rust library for KittyUI terminal rendering"
 
 [lib]
-crate-type = ["cdylib", "lib"]
+# Compile as a shared library (.so/.dylib/.dll) for use via bun:ffi with C ABI
+crate-type = ["cdylib"]
 
 [dependencies]
-# napi = { version = "2", features = ["default"] }
-# napi-derive = "2"

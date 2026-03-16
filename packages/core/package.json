@@ -11,8 +11,5 @@
   },
   "files": [
     "dist"
-  ],
-  "engines": {
-    "node": ">=18"
-  }
+  ]
 }

@@ -3,12 +3,10 @@
   "private": true,
   "version": "0.0.0",
   "description": "A Rust core + React bindings framework for building rich terminal apps using the Kitty graphics protocol",
+  "workspaces": ["packages/*"],
   "scripts": {
-    "build": "pnpm -r run build",
-    "test": "pnpm -r run test",
-    "clean": "pnpm -r run clean"
-  },
-  "engines": {
-    "node": ">=18"
+    "build": "bun run --filter '*' build",
+    "test": "bun run --filter '*' test",
+    "clean": "bun run --filter '*' clean"
   }
 }
