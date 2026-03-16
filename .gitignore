@@ -11,6 +11,9 @@ target/
 *.dylib
 *.dll
 
+# Native FFI build output
+packages/core/native/
+
 # Lockfiles
 bun.lockb
 

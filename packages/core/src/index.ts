@@ -1,9 +1,14 @@
 /**
  * @kittyui/core — Core TypeScript bindings for the KittyUI rendering engine.
  *
- * Native Rust bindings will be loaded via bun:ffi in issue #2.
+ * Native Rust functions are loaded via bun:ffi.
  */
 
+import { lib } from "./ffi.js";
+
+/**
+ * Calls the native Rust `hello()` function and returns its string result.
+ */
 export function hello(): string {
-  return "Hello from @kittyui/core!";
+  return String(lib.symbols.hello());
 }

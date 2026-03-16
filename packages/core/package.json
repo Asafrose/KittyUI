@@ -2,12 +2,14 @@
   "name": "@kittyui/core",
   "version": "0.1.0",
   "description": "Core TypeScript bindings for KittyUI",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc --build",
-    "clean": "rm -rf dist",
-    "test": "echo \"No tests yet\"",
+    "build": "bun run build:native && tsc --build",
+    "build:native": "bash scripts/build-native.sh",
+    "clean": "rm -rf dist native",
+    "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
   "files": [
