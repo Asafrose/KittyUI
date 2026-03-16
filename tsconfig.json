@@ -2,8 +2,8 @@
   "compilerOptions": {
     "strict": true,
     "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
@@ -11,11 +11,5 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "types": ["bun"]
-  },
-  "references": [
-    { "path": "packages/core" },
-    { "path": "packages/react" },
-    { "path": "packages/create-kittyui" }
-  ],
-  "files": []
+  }
 }
