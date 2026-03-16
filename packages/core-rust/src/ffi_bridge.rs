@@ -606,6 +606,8 @@ pub unsafe extern "C" fn get_all_layouts(out_ptr: *mut f32, max_nodes: u32) -> u
 
 #[cfg(test)]
 mod tests {
+    use serial_test::serial;
+
     use super::*;
 
     fn encode_create_node(node_id: u32, style_json: &str) -> Vec<u8> {
@@ -674,6 +676,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn init_returns_capabilities_json() {
         let ptr = init();
         let cstr = unsafe { std::ffi::CStr::from_ptr(ptr) };
@@ -683,6 +686,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn create_and_remove_node() {
         setup();
         let buf = encode_create_node(1, r#"{"width":10,"height":5}"#);
@@ -702,6 +706,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn append_child_and_layout() {
         setup();
         let mut buf = Vec::new();
@@ -726,6 +731,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn set_style_updates_node() {
         setup();
         let mut buf = Vec::new();
@@ -753,6 +759,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn set_text_stores_content() {
         setup();
         let mut buf = Vec::new();
@@ -767,6 +774,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn insert_before_adds_child() {
         setup();
         let mut buf = Vec::new();
@@ -785,6 +793,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn get_all_layouts_returns_count() {
         setup();
         let mut buf = Vec::new();
@@ -806,6 +815,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn empty_mutation_buffer_is_noop() {
         setup();
         unsafe { apply_mutations(std::ptr::null(), 0) };
@@ -816,6 +826,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn request_render_sets_dirty() {
         setup();
         with_engine(|state| {
@@ -829,6 +840,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn keyboard_event_encoding() {
         setup();
         with_engine(|state| {
@@ -846,6 +858,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn mouse_event_encoding() {
         setup();
         with_engine(|state| {
@@ -859,6 +872,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn resize_event_encoding() {
         setup();
         with_engine(|state| {
@@ -874,6 +888,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn batched_mutations_in_single_buffer() {
         setup();
         let mut buf = Vec::new();
@@ -893,6 +908,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn json_style_parsing() {
         let style =
             parse_style_json(br#"{"width":42,"height":10,"flexGrow":2,"flexDirection":"column"}"#);
@@ -910,6 +926,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn render_frame_clears_dirty() {
         setup();
         let buf = encode_create_node(1, r#"{"width":80,"height":24}"#);

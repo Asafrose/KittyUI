@@ -16,6 +16,9 @@ libc = "0.2"
 signal-hook = "0.3"
 taffy = "0.7"
 
+[dev-dependencies]
+serial_test = "3"
+
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 unwrap_used = "deny"
