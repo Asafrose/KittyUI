@@ -13,6 +13,7 @@ pub mod layout;
 pub mod mock_terminal;
 pub mod mouse;
 pub mod raw_mode;
+pub mod render_loop;
 pub mod screen;
 pub mod signals;
 
