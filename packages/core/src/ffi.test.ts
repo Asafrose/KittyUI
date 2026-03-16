@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { nativeAvailable, lib } from "./ffi.js";
+import { lib, nativeAvailable } from "./ffi.js";
 import { hello } from "./index.js";
 
 describe.skipIf(!nativeAvailable)("ffi integration", () => {

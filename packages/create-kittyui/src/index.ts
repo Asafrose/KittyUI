@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * create-kittyui — Scaffolding CLI for KittyUI projects.
+ * Create-kittyui — Scaffolding CLI for KittyUI projects.
  */
 
-console.log("create-kittyui: scaffolding CLI coming soon!");
+process.stdout.write("create-kittyui: scaffolding CLI coming soon!\n");

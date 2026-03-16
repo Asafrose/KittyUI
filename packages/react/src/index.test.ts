@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { nativeAvailable } from "@kittyui/core";
 import { hello } from "./index.js";
+import { nativeAvailable } from "@kittyui/core";
 
 describe("@kittyui/react", () => {
   test("re-exports hello from @kittyui/core", () => {

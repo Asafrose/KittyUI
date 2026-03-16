@@ -1,7 +1,7 @@
 /**
  * Low-level FFI bridge — loads the native kittyui-core Rust library via bun:ffi.
  */
-import { dlopen, FFIType, suffix } from "bun:ffi";
+import { FFIType, dlopen, suffix } from "bun:ffi";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -16,4 +16,11 @@ const symbols = {
   },
 } as const;
 
-export const lib = nativeAvailable ? dlopen(libPath, symbols) : null;
+const loadLib = () => {
+  if (nativeAvailable) {
+    return dlopen(libPath, symbols);
+  }
+  return undefined;
+};
+
+export const lib = loadLib();
