@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ts-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     name: Typecheck & Lint
