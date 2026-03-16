@@ -139,12 +139,44 @@ pub enum Color {
 // SGR style attributes
 // ---------------------------------------------------------------------------
 
+/// Underline style variants (SGR 4:x sub-parameters).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnderlineStyle {
+    /// No underline (4:0).
+    None,
+    /// Single underline (4:1) — same as plain SGR 4.
+    Single,
+    /// Double underline (4:2).
+    Double,
+    /// Curly/wavy underline (4:3).
+    Curly,
+    /// Dotted underline (4:4).
+    Dotted,
+    /// Dashed underline (4:5).
+    Dashed,
+}
+
+impl UnderlineStyle {
+    const fn param(self) -> u8 {
+        match self {
+            Self::None => 0,
+            Self::Single => 1,
+            Self::Double => 2,
+            Self::Curly => 3,
+            Self::Dotted => 4,
+            Self::Dashed => 5,
+        }
+    }
+}
+
 /// Text style attributes applied via SGR (Select Graphic Rendition).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct Style {
     pub fg: Option<Color>,
     pub bg: Option<Color>,
+    pub underline_color: Option<Color>,
+    pub underline_style: Option<UnderlineStyle>,
     pub bold: bool,
     pub dim: bool,
     pub italic: bool,
@@ -152,6 +184,7 @@ pub struct Style {
     pub blink: bool,
     pub reverse: bool,
     pub strikethrough: bool,
+    pub overline: bool,
 }
 
 impl Style {
@@ -161,6 +194,8 @@ impl Style {
         Self {
             fg: None,
             bg: None,
+            underline_color: None,
+            underline_style: None,
             bold: false,
             dim: false,
             italic: false,
@@ -168,6 +203,7 @@ impl Style {
             blink: false,
             reverse: false,
             strikethrough: false,
+            overline: false,
         }
     }
 
@@ -195,6 +231,9 @@ impl Style {
         if self.underline {
             buf.push_str(";4");
         }
+        if let Some(style) = self.underline_style {
+            let _ = write!(buf, ";4:{}", style.param());
+        }
         if self.blink {
             buf.push_str(";5");
         }
@@ -204,12 +243,18 @@ impl Style {
         if self.strikethrough {
             buf.push_str(";9");
         }
+        if self.overline {
+            buf.push_str(";53");
+        }
 
         if let Some(color) = self.fg {
             write_color_sgr(&mut buf, color, false);
         }
         if let Some(color) = self.bg {
             write_color_sgr(&mut buf, color, true);
+        }
+        if let Some(color) = self.underline_color {
+            write_underline_color_sgr(&mut buf, color);
         }
 
         buf.push('m');
@@ -239,10 +284,155 @@ fn write_color_sgr(buf: &mut String, color: Color, is_bg: bool) {
     }
 }
 
+/// Append the SGR parameters for an underline color.
+fn write_underline_color_sgr(buf: &mut String, color: Color) {
+    match color {
+        Color::Rgb(r, g, b) => {
+            let _ = write!(buf, ";58;2;{r};{g};{b}");
+        }
+        Color::AnsiBright(n) => {
+            let _ = write!(buf, ";58;5;{}", n + 8);
+        }
+        Color::Palette(n) | Color::Ansi(n) => {
+            let _ = write!(buf, ";58;5;{n}");
+        }
+    }
+}
+
 /// Generate a reset-all-attributes sequence.
 #[must_use]
 pub fn sgr_reset() -> Vec<u8> {
     b"\x1b[0m".to_vec()
+}
+
+// ---------------------------------------------------------------------------
+// Scrolling regions
+// ---------------------------------------------------------------------------
+
+/// Set scrolling region (DECSTBM). Rows are 1-based.
+#[must_use]
+pub fn scroll_region_set(top: u16, bottom: u16) -> Vec<u8> {
+    format!("\x1b[{top};{bottom}r").into_bytes()
+}
+
+/// Reset scrolling region to full screen.
+#[must_use]
+pub fn scroll_region_reset() -> Vec<u8> {
+    b"\x1b[r".to_vec()
+}
+
+/// Scroll up by `n` lines (SU).
+#[must_use]
+pub fn scroll_up(n: u16) -> Vec<u8> {
+    format!("\x1b[{n}S").into_bytes()
+}
+
+/// Scroll down by `n` lines (SD).
+#[must_use]
+pub fn scroll_down(n: u16) -> Vec<u8> {
+    format!("\x1b[{n}T").into_bytes()
+}
+
+// ---------------------------------------------------------------------------
+// Hyperlinks (OSC 8)
+// ---------------------------------------------------------------------------
+
+/// Open a hyperlink. `params` can be empty or contain key=value pairs
+/// separated by `:` (e.g. `id=mylink`).
+#[must_use]
+pub fn hyperlink_open(uri: &str, params: &str) -> Vec<u8> {
+    format!("\x1b]8;{params};{uri}\x1b\\").into_bytes()
+}
+
+/// Close the current hyperlink.
+#[must_use]
+pub fn hyperlink_close() -> Vec<u8> {
+    b"\x1b]8;;\x1b\\".to_vec()
+}
+
+// ---------------------------------------------------------------------------
+// Window title (OSC 2)
+// ---------------------------------------------------------------------------
+
+/// Set the terminal window title.
+#[must_use]
+pub fn set_title(title: &str) -> Vec<u8> {
+    format!("\x1b]2;{title}\x1b\\").into_bytes()
+}
+
+// ---------------------------------------------------------------------------
+// Bracketed paste mode
+// ---------------------------------------------------------------------------
+
+/// Enable bracketed paste mode.
+#[must_use]
+pub fn bracketed_paste_enable() -> Vec<u8> {
+    b"\x1b[?2004h".to_vec()
+}
+
+/// Disable bracketed paste mode.
+#[must_use]
+pub fn bracketed_paste_disable() -> Vec<u8> {
+    b"\x1b[?2004l".to_vec()
+}
+
+// ---------------------------------------------------------------------------
+// Mouse tracking
+// ---------------------------------------------------------------------------
+
+/// Enable SGR mouse mode (button events with SGR encoding).
+#[must_use]
+pub fn sgr_mouse_enable() -> Vec<u8> {
+    b"\x1b[?1006h".to_vec()
+}
+
+/// Disable SGR mouse mode.
+#[must_use]
+pub fn sgr_mouse_disable() -> Vec<u8> {
+    b"\x1b[?1006l".to_vec()
+}
+
+/// Enable SGR-pixel mouse mode (sub-cell precision).
+#[must_use]
+pub fn pixel_mouse_enable() -> Vec<u8> {
+    b"\x1b[?1016h".to_vec()
+}
+
+/// Disable SGR-pixel mouse mode.
+#[must_use]
+pub fn pixel_mouse_disable() -> Vec<u8> {
+    b"\x1b[?1016l".to_vec()
+}
+
+/// Enable any-event mouse tracking (motion + buttons).
+#[must_use]
+pub fn any_event_mouse_enable() -> Vec<u8> {
+    b"\x1b[?1003h".to_vec()
+}
+
+/// Disable any-event mouse tracking.
+#[must_use]
+pub fn any_event_mouse_disable() -> Vec<u8> {
+    b"\x1b[?1003l".to_vec()
+}
+
+// ---------------------------------------------------------------------------
+// Kitty keyboard protocol
+// ---------------------------------------------------------------------------
+
+/// Enable the Kitty keyboard protocol with the given flags bitfield.
+///
+/// Common flags: 1 = disambiguate, 2 = report events, 4 = alternate keys,
+/// 8 = report all keys as escapes, 16 = report associated text.
+#[must_use]
+pub fn kitty_keyboard_enable(flags: u8) -> Vec<u8> {
+    format!("\x1b[>{flags}u").into_bytes()
+}
+
+/// Disable the Kitty keyboard protocol (pop one level).
+#[must_use]
+pub fn kitty_keyboard_disable() -> Vec<u8> {
+    b"\x1b[<u".to_vec()
 }
 
 // ---------------------------------------------------------------------------
@@ -652,10 +842,200 @@ mod tests {
             StyledCell { ch: '4', style: b },
         ];
         let result = encode_row(&cells);
-        // Each change emits a new SGR
         let result_str =
             std::str::from_utf8(&result).unwrap_or_else(|_| panic!("output should be valid utf-8"));
-        // 4 style switches + trailing reset = 5 escape sequences
         assert_eq!(result_str.matches("\x1b[").count(), 5);
+    }
+
+    // -- Underline styles --
+
+    #[test]
+    fn underline_style_single() {
+        let s = Style {
+            underline_style: Some(UnderlineStyle::Single),
+            ..Style::new()
+        };
+        assert!(s.to_sgr().windows(4).any(|w| w == b"4:1m" || w == b";4:1"));
+    }
+
+    #[test]
+    fn underline_style_double() {
+        let s = Style {
+            underline_style: Some(UnderlineStyle::Double),
+            ..Style::new()
+        };
+        let sgr = String::from_utf8(s.to_sgr()).unwrap();
+        assert!(sgr.contains("4:2"));
+    }
+
+    #[test]
+    fn underline_style_curly() {
+        let s = Style {
+            underline_style: Some(UnderlineStyle::Curly),
+            ..Style::new()
+        };
+        let sgr = String::from_utf8(s.to_sgr()).unwrap();
+        assert!(sgr.contains("4:3"));
+    }
+
+    #[test]
+    fn underline_style_dotted() {
+        let s = Style {
+            underline_style: Some(UnderlineStyle::Dotted),
+            ..Style::new()
+        };
+        let sgr = String::from_utf8(s.to_sgr()).unwrap();
+        assert!(sgr.contains("4:4"));
+    }
+
+    #[test]
+    fn underline_style_dashed() {
+        let s = Style {
+            underline_style: Some(UnderlineStyle::Dashed),
+            ..Style::new()
+        };
+        let sgr = String::from_utf8(s.to_sgr()).unwrap();
+        assert!(sgr.contains("4:5"));
+    }
+
+    #[test]
+    fn underline_style_none_variant() {
+        let s = Style {
+            underline_style: Some(UnderlineStyle::None),
+            ..Style::new()
+        };
+        let sgr = String::from_utf8(s.to_sgr()).unwrap();
+        assert!(sgr.contains("4:0"));
+    }
+
+    // -- Underline color --
+
+    #[test]
+    fn underline_color_rgb() {
+        let s = Style {
+            underline_color: Some(Color::Rgb(255, 0, 128)),
+            ..Style::new()
+        };
+        let sgr = String::from_utf8(s.to_sgr()).unwrap();
+        assert!(sgr.contains("58;2;255;0;128"));
+    }
+
+    #[test]
+    fn underline_color_palette() {
+        let s = Style {
+            underline_color: Some(Color::Palette(196)),
+            ..Style::new()
+        };
+        let sgr = String::from_utf8(s.to_sgr()).unwrap();
+        assert!(sgr.contains("58;5;196"));
+    }
+
+    // -- Overline --
+
+    #[test]
+    fn overline_style() {
+        let s = Style {
+            overline: true,
+            ..Style::new()
+        };
+        let sgr = String::from_utf8(s.to_sgr()).unwrap();
+        assert!(sgr.contains(";53"));
+    }
+
+    // -- Scrolling regions --
+
+    #[test]
+    fn scroll_region_set_generates_decstbm() {
+        assert_eq!(scroll_region_set(1, 24), b"\x1b[1;24r");
+        assert_eq!(scroll_region_set(5, 20), b"\x1b[5;20r");
+    }
+
+    #[test]
+    fn scroll_region_reset_sequence() {
+        assert_eq!(scroll_region_reset(), b"\x1b[r");
+    }
+
+    #[test]
+    fn scroll_up_generates_su() {
+        assert_eq!(scroll_up(1), b"\x1b[1S");
+        assert_eq!(scroll_up(5), b"\x1b[5S");
+    }
+
+    #[test]
+    fn scroll_down_generates_sd() {
+        assert_eq!(scroll_down(1), b"\x1b[1T");
+        assert_eq!(scroll_down(3), b"\x1b[3T");
+    }
+
+    // -- Hyperlinks --
+
+    #[test]
+    fn hyperlink_open_with_uri() {
+        assert_eq!(
+            hyperlink_open("https://example.com", ""),
+            b"\x1b]8;;https://example.com\x1b\\"
+        );
+    }
+
+    #[test]
+    fn hyperlink_open_with_params() {
+        assert_eq!(
+            hyperlink_open("https://example.com", "id=link1"),
+            b"\x1b]8;id=link1;https://example.com\x1b\\"
+        );
+    }
+
+    #[test]
+    fn hyperlink_close_sequence() {
+        assert_eq!(hyperlink_close(), b"\x1b]8;;\x1b\\");
+    }
+
+    // -- Window title --
+
+    #[test]
+    fn set_title_generates_osc2() {
+        assert_eq!(set_title("My App"), b"\x1b]2;My App\x1b\\");
+    }
+
+    // -- Bracketed paste --
+
+    #[test]
+    fn bracketed_paste_enable_and_disable() {
+        assert_eq!(bracketed_paste_enable(), b"\x1b[?2004h");
+        assert_eq!(bracketed_paste_disable(), b"\x1b[?2004l");
+    }
+
+    // -- Mouse tracking --
+
+    #[test]
+    fn sgr_mouse_enable_and_disable() {
+        assert_eq!(sgr_mouse_enable(), b"\x1b[?1006h");
+        assert_eq!(sgr_mouse_disable(), b"\x1b[?1006l");
+    }
+
+    #[test]
+    fn pixel_mouse_enable_and_disable() {
+        assert_eq!(pixel_mouse_enable(), b"\x1b[?1016h");
+        assert_eq!(pixel_mouse_disable(), b"\x1b[?1016l");
+    }
+
+    #[test]
+    fn any_event_mouse_enable_and_disable() {
+        assert_eq!(any_event_mouse_enable(), b"\x1b[?1003h");
+        assert_eq!(any_event_mouse_disable(), b"\x1b[?1003l");
+    }
+
+    // -- Kitty keyboard protocol --
+
+    #[test]
+    fn kitty_keyboard_enable_with_flags() {
+        assert_eq!(kitty_keyboard_enable(1), b"\x1b[>1u");
+        assert_eq!(kitty_keyboard_enable(3), b"\x1b[>3u");
+        assert_eq!(kitty_keyboard_enable(31), b"\x1b[>31u");
+    }
+
+    #[test]
+    fn kitty_keyboard_disable_sequence() {
+        assert_eq!(kitty_keyboard_disable(), b"\x1b[<u");
     }
 }
