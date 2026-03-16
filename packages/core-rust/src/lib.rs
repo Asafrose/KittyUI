@@ -3,6 +3,7 @@
 //! This crate exposes a C ABI that Bun loads via `bun:ffi` (see issue #2).
 
 pub mod buffer;
+pub mod caps;
 pub mod cleanup;
 pub mod mock_terminal;
 pub mod raw_mode;
