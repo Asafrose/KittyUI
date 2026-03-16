@@ -1,0 +1,19 @@
+{
+  "name": "create-kittyui",
+  "version": "0.1.0",
+  "description": "Scaffolding CLI for KittyUI projects",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "create-kittyui": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "rm -rf dist",
+    "test": "echo \"No tests yet\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "files": [
+    "dist"
+  ]
+}
