@@ -6,9 +6,16 @@
 
 import { lib } from "./ffi.js";
 
+export { nativeAvailable } from "./ffi.js";
+
 /**
  * Calls the native Rust `hello()` function and returns its string result.
+ *
+ * @throws If the native library is not available (not built yet).
  */
-export function hello(): string {
+export const hello = (): string => {
+  if (!lib) {
+    throw new Error("Native library not available — run `bun run build:native` first");
+  }
   return String(lib.symbols.hello());
-}
+};
