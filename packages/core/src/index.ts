@@ -8,6 +8,12 @@ import { lib } from "./ffi.js";
 
 export { nativeAvailable } from "./ffi.js";
 
+export { MutationEncoder } from "./mutation-encoder.js";
+export { EventDecoder } from "./event-decoder.js";
+export type { KittyEvent, KeyboardEvent, MouseEvent, ResizeEvent } from "./event-decoder.js";
+export { Bridge } from "./bridge.js";
+export type { NodeLayout } from "./bridge.js";
+
 /**
  * Calls the native Rust `hello()` function and returns its string result.
  *
