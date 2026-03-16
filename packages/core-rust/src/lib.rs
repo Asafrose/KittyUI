@@ -6,6 +6,7 @@ pub mod ansi;
 pub mod buffer;
 pub mod caps;
 pub mod cleanup;
+pub mod hit_test;
 pub mod layout;
 pub mod mock_terminal;
 pub mod mouse;

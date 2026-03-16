@@ -488,6 +488,16 @@ impl LayoutTree {
     pub fn node_count(&self) -> usize {
         self.taffy.total_node_count()
     }
+
+    /// Return the children of a node.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `TaffyError` if the node does not exist.
+    pub fn children(&self, node: LayoutNodeId) -> Result<Vec<LayoutNodeId>, taffy::TaffyError> {
+        let ids = self.taffy.children(node.0)?;
+        Ok(ids.into_iter().map(LayoutNodeId).collect())
+    }
 }
 
 impl Default for LayoutTree {
