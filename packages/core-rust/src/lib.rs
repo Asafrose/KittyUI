@@ -7,12 +7,16 @@ pub mod buffer;
 pub mod caps;
 pub mod cell;
 pub mod cleanup;
+pub mod ffi_bridge;
+pub mod focus;
 pub mod hit_test;
+pub mod image;
 pub mod keyboard;
 pub mod layout;
 pub mod mock_terminal;
 pub mod mouse;
 pub mod raw_mode;
+pub mod render_loop;
 pub mod screen;
 pub mod signals;
 
