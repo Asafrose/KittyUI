@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { hello } from "./ffi.js";
+import { hello } from "./index.js";
 
 describe("ffi", () => {
   test("hello returns greeting from Rust", () => {
