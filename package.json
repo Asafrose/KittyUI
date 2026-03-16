@@ -14,7 +14,9 @@
     "fmt": "bun run fmt:rs && bun run fmt:ts",
     "fmt:rs": "cargo fmt --manifest-path packages/core-rust/Cargo.toml",
     "fmt:ts": "oxfmt --write packages/core packages/react packages/create-kittyui",
-    "fmt:check": "cargo fmt --manifest-path packages/core-rust/Cargo.toml --check && oxfmt --check packages/core packages/react packages/create-kittyui"
+    "fmt:check": "cargo fmt --manifest-path packages/core-rust/Cargo.toml --check && oxfmt --check packages/core packages/react packages/create-kittyui",
+    "typecheck": "bun run --filter '*' typecheck",
+    "check": "bun run lint && bun run typecheck"
   },
   "devDependencies": {
     "oxfmt": "^0.40.0",
