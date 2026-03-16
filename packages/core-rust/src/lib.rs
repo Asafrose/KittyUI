@@ -5,6 +5,7 @@
 pub mod buffer;
 pub mod cleanup;
 pub mod mock_terminal;
+pub mod mouse;
 pub mod raw_mode;
 pub mod screen;
 pub mod signals;
