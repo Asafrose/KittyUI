@@ -9,3 +9,8 @@ description = "Core Rust library for KittyUI terminal rendering"
 crate-type = ["cdylib"]
 
 [dependencies]
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"

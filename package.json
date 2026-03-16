@@ -7,6 +7,17 @@
   "scripts": {
     "build": "bun run --filter '*' build",
     "test": "bun run --filter '*' test",
-    "clean": "bun run --filter '*' clean"
+    "clean": "bun run --filter '*' clean",
+    "lint": "bun run lint:rs && bun run lint:ts",
+    "lint:rs": "cargo clippy --manifest-path packages/core-rust/Cargo.toml -- -D warnings",
+    "lint:ts": "oxlint packages/core packages/react packages/create-kittyui",
+    "fmt": "bun run fmt:rs && bun run fmt:ts",
+    "fmt:rs": "cargo fmt --manifest-path packages/core-rust/Cargo.toml",
+    "fmt:ts": "oxfmt --write packages/core packages/react packages/create-kittyui",
+    "fmt:check": "cargo fmt --manifest-path packages/core-rust/Cargo.toml --check && oxfmt --check packages/core packages/react packages/create-kittyui"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.40.0",
+    "oxlint": "^1.55.0"
   }
 }
