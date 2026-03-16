@@ -8,6 +8,7 @@ pub mod caps;
 pub mod cleanup;
 pub mod layout;
 pub mod mock_terminal;
+pub mod mouse;
 pub mod raw_mode;
 pub mod screen;
 pub mod signals;
