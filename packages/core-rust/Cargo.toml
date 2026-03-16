@@ -11,6 +11,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 libc = "0.2"
 signal-hook = "0.3"
+taffy = "0.7"
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }

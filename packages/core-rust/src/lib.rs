@@ -4,6 +4,7 @@
 
 pub mod buffer;
 pub mod cleanup;
+pub mod layout;
 pub mod mock_terminal;
 pub mod raw_mode;
 pub mod screen;
