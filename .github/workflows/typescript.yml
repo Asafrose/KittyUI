@@ -40,4 +40,4 @@ jobs:
         run: bun install
 
       - name: Test
-        run: bun test || echo "No tests found, skipping"
+        run: bun test
