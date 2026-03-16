@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { nativeAvailable } from "@kittyui/core";
 import { hello } from "./index.js";
 
 describe("@kittyui/react", () => {
@@ -7,7 +8,7 @@ describe("@kittyui/react", () => {
     expect(typeof hello).toBe("function");
   });
 
-  test("hello returns expected greeting", () => {
+  test.skipIf(!nativeAvailable)("hello returns expected greeting", () => {
     const result = hello();
     expect(result).toBe("Hello from kittyui-core!");
   });

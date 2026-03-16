@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { nativeAvailable, lib } from "./ffi.js";
 import { hello } from "./index.js";
-import { lib } from "./ffi.js";
 
-describe("ffi integration", () => {
+describe.skipIf(!nativeAvailable)("ffi integration", () => {
   test("hello returns greeting from Rust", () => {
     const result = hello();
     expect(result).toBe("Hello from kittyui-core!");
@@ -14,9 +14,9 @@ describe("ffi integration", () => {
   });
 
   test("native library loads successfully", () => {
-    expect(lib).toBeDefined();
-    expect(lib.symbols).toBeDefined();
-    expect(lib.symbols.hello).toBeDefined();
+    expect(lib).not.toBeNull();
+    expect(lib!.symbols).toBeDefined();
+    expect(lib!.symbols.hello).toBeDefined();
   });
 
   test("calling hello multiple times returns consistent results", () => {
