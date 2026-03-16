@@ -5,6 +5,7 @@
 pub mod ansi;
 pub mod buffer;
 pub mod caps;
+pub mod cell;
 pub mod cleanup;
 pub mod hit_test;
 pub mod layout;
