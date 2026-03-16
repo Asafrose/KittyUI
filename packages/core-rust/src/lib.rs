@@ -7,7 +7,6 @@ pub mod buffer;
 pub mod caps;
 pub mod cell;
 pub mod cleanup;
-pub mod ffi_bridge;
 pub mod focus;
 pub mod hit_test;
 pub mod keyboard;
