@@ -1,11 +1,13 @@
-/// KittyUI Core — Rust rendering engine for the Kitty graphics protocol.
-///
-/// This crate exposes a C ABI that Bun loads via `bun:ffi` (see issue #2).
+//! `KittyUI` Core — Rust rendering engine for the Kitty graphics protocol.
+//!
+//! This crate exposes a C ABI that Bun loads via `bun:ffi` (see issue #2).
+
+use std::ffi::c_char;
 
 /// Placeholder function demonstrating the C ABI pattern used by bun:ffi.
 #[no_mangle]
-pub extern "C" fn hello() -> *const u8 {
-    b"Hello from kittyui-core!\0".as_ptr()
+pub extern "C" fn hello() -> *const c_char {
+    c"Hello from kittyui-core!".as_ptr()
 }
 
 #[cfg(test)]
@@ -15,7 +17,7 @@ mod tests {
     #[test]
     fn it_works() {
         let ptr = hello();
-        let cstr = unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) };
+        let cstr = unsafe { std::ffi::CStr::from_ptr(ptr) };
         assert_eq!(cstr.to_str().unwrap(), "Hello from kittyui-core!");
     }
 }
