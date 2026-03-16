@@ -9,6 +9,9 @@ description = "Core Rust library for KittyUI terminal rendering"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+base64 = "0.22"
+flate2 = "1.0"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 libc = "0.2"
 signal-hook = "0.3"
 taffy = "0.7"

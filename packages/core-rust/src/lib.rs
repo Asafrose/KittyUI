@@ -8,6 +8,7 @@ pub mod caps;
 pub mod cell;
 pub mod cleanup;
 pub mod hit_test;
+pub mod image;
 pub mod keyboard;
 pub mod layout;
 pub mod mock_terminal;
