@@ -4,6 +4,7 @@
 
 pub mod ansi;
 pub mod buffer;
+pub mod caps;
 pub mod cleanup;
 pub mod layout;
 pub mod mock_terminal;
