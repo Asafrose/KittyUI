@@ -6,7 +6,9 @@
   "workspaces": ["packages/*"],
   "scripts": {
     "build": "bun run --filter '*' build",
-    "test": "bun run --filter '*' test",
+    "test": "bun run test:rs && bun run test:ts",
+    "test:rs": "cargo test --manifest-path packages/core-rust/Cargo.toml",
+    "test:ts": "bun run --filter '*' test",
     "clean": "bun run --filter '*' clean",
     "lint": "bun run lint:rs && bun run lint:ts",
     "lint:rs": "cargo clippy --manifest-path packages/core-rust/Cargo.toml -- -D warnings",
