@@ -1,0 +1,24 @@
+{
+  "name": "@kittyui/react",
+  "version": "0.1.0",
+  "description": "React bindings for KittyUI terminal rendering",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "rm -rf dist",
+    "test": "echo \"No tests yet\""
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@kittyui/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

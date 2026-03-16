@@ -1,0 +1,12 @@
+[package]
+name = "kittyui-core"
+version = "0.1.0"
+edition = "2021"
+description = "Core Rust library for KittyUI terminal rendering"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+# napi = { version = "2", features = ["default"] }
+# napi-derive = "2"
