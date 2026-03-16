@@ -781,4 +781,690 @@ mod tests {
         assert_eq!(ev.event_type, MouseEventType::Move);
         assert!(ev.modifiers.contains(Modifiers::SHIFT));
     }
+
+    // ===================================================================
+    // 1. Malformed / incomplete SGR sequences
+    // ===================================================================
+
+    #[test]
+    fn incomplete_just_esc() {
+        assert_eq!(parse(b"\x1b"), Err(ParseError::Incomplete));
+    }
+
+    #[test]
+    fn incomplete_esc_bracket() {
+        assert_eq!(parse(b"\x1b["), Err(ParseError::Incomplete));
+    }
+
+    #[test]
+    fn incomplete_esc_bracket_lt() {
+        assert_eq!(parse(b"\x1b[<"), Err(ParseError::Incomplete));
+    }
+
+    #[test]
+    fn incomplete_params_no_terminator() {
+        assert_eq!(parse(b"\x1b[<0;10;5"), Err(ParseError::Incomplete));
+    }
+
+    #[test]
+    fn malformed_non_numeric_x() {
+        assert_eq!(parse(b"\x1b[<0;abc;1M"), Err(ParseError::MalformedParams));
+    }
+
+    #[test]
+    fn malformed_non_numeric_y() {
+        assert_eq!(parse(b"\x1b[<0;1;xyzM"), Err(ParseError::MalformedParams));
+    }
+
+    #[test]
+    fn malformed_non_numeric_cb() {
+        assert_eq!(parse(b"\x1b[<xx;1;1M"), Err(ParseError::MalformedParams));
+    }
+
+    #[test]
+    fn malformed_too_many_params() {
+        assert_eq!(parse(b"\x1b[<0;1;1;1M"), Err(ParseError::MalformedParams));
+    }
+
+    #[test]
+    fn malformed_single_param() {
+        assert_eq!(parse(b"\x1b[<0M"), Err(ParseError::MalformedParams));
+    }
+
+    #[test]
+    fn malformed_empty_params() {
+        assert_eq!(parse(b"\x1b[<M"), Err(ParseError::MalformedParams));
+    }
+
+    #[test]
+    fn not_mouse_plain_csi() {
+        assert_eq!(parse(b"\x1b[1;2H"), Err(ParseError::NotMouseSequence));
+    }
+
+    #[test]
+    fn not_mouse_plain_text() {
+        assert_eq!(parse(b"hello"), Err(ParseError::NotMouseSequence));
+    }
+
+    #[test]
+    fn malformed_negative_params() {
+        // Negative numbers won't parse as u16.
+        assert_eq!(parse(b"\x1b[<-1;1;1M"), Err(ParseError::MalformedParams));
+    }
+
+    #[test]
+    fn malformed_float_params() {
+        assert_eq!(parse(b"\x1b[<0;1.5;1M"), Err(ParseError::MalformedParams));
+    }
+
+    // ===================================================================
+    // 2. Boundary coordinates
+    // ===================================================================
+
+    #[test]
+    fn coords_origin_one_one() {
+        let (ev, _) = parse(b"\x1b[<0;1;1M").unwrap();
+        assert_eq!(ev.x, 0);
+        assert_eq!(ev.y, 0);
+    }
+
+    #[test]
+    fn coords_origin_zero_saturates() {
+        // Coordinate 0 → saturating_sub(1) = 0.
+        let (ev, _) = parse(b"\x1b[<0;0;0M").unwrap();
+        assert_eq!(ev.x, 0);
+        assert_eq!(ev.y, 0);
+    }
+
+    #[test]
+    fn coords_large_terminal() {
+        // 500 columns, 200 rows.
+        let (ev, _) = parse(b"\x1b[<0;500;200M").unwrap();
+        assert_eq!(ev.x, 499);
+        assert_eq!(ev.y, 199);
+    }
+
+    #[test]
+    fn coords_max_u16() {
+        let (ev, _) = parse(b"\x1b[<0;65535;65535M").unwrap();
+        assert_eq!(ev.x, 65534);
+        assert_eq!(ev.y, 65534);
+    }
+
+    #[test]
+    fn coords_single_digit() {
+        let (ev, _) = parse(b"\x1b[<0;2;3M").unwrap();
+        assert_eq!(ev.x, 1);
+        assert_eq!(ev.y, 2);
+    }
+
+    // ===================================================================
+    // 3. All button + modifier combinations
+    // ===================================================================
+
+    #[test]
+    fn left_with_shift() {
+        // Cb = 0 (left) + 4 (shift) = 4
+        let (ev, _) = parse(b"\x1b[<4;1;1M").unwrap();
+        assert_eq!(ev.button, Button::Left);
+        assert!(ev.modifiers.contains(Modifiers::SHIFT));
+        assert!(!ev.modifiers.contains(Modifiers::ALT));
+        assert!(!ev.modifiers.contains(Modifiers::CTRL));
+    }
+
+    #[test]
+    fn left_with_alt() {
+        // Cb = 0 + 8 = 8
+        let (ev, _) = parse(b"\x1b[<8;1;1M").unwrap();
+        assert_eq!(ev.button, Button::Left);
+        assert!(ev.modifiers.contains(Modifiers::ALT));
+    }
+
+    #[test]
+    fn left_with_ctrl() {
+        // Cb = 0 + 16 = 16
+        let (ev, _) = parse(b"\x1b[<16;1;1M").unwrap();
+        assert_eq!(ev.button, Button::Left);
+        assert!(ev.modifiers.contains(Modifiers::CTRL));
+    }
+
+    #[test]
+    fn right_with_shift() {
+        // Cb = 2 + 4 = 6
+        let (ev, _) = parse(b"\x1b[<6;1;1M").unwrap();
+        assert_eq!(ev.button, Button::Right);
+        assert!(ev.modifiers.contains(Modifiers::SHIFT));
+    }
+
+    #[test]
+    fn right_with_alt() {
+        // Cb = 2 + 8 = 10
+        let (ev, _) = parse(b"\x1b[<10;1;1M").unwrap();
+        assert_eq!(ev.button, Button::Right);
+        assert!(ev.modifiers.contains(Modifiers::ALT));
+    }
+
+    #[test]
+    fn right_with_ctrl() {
+        // Cb = 2 + 16 = 18
+        let (ev, _) = parse(b"\x1b[<18;1;1M").unwrap();
+        assert_eq!(ev.button, Button::Right);
+        assert!(ev.modifiers.contains(Modifiers::CTRL));
+    }
+
+    #[test]
+    fn middle_with_shift() {
+        // Cb = 1 + 4 = 5
+        let (ev, _) = parse(b"\x1b[<5;1;1M").unwrap();
+        assert_eq!(ev.button, Button::Middle);
+        assert!(ev.modifiers.contains(Modifiers::SHIFT));
+    }
+
+    #[test]
+    fn middle_with_all_modifiers() {
+        // Cb = 1 (middle) + 4 (shift) + 8 (alt) + 16 (ctrl) = 29
+        let (ev, _) = parse(b"\x1b[<29;1;1M").unwrap();
+        assert_eq!(ev.button, Button::Middle);
+        assert!(ev.modifiers.contains(Modifiers::SHIFT));
+        assert!(ev.modifiers.contains(Modifiers::ALT));
+        assert!(ev.modifiers.contains(Modifiers::CTRL));
+    }
+
+    #[test]
+    fn left_with_shift_alt() {
+        // Cb = 0 + 4 + 8 = 12
+        let (ev, _) = parse(b"\x1b[<12;1;1M").unwrap();
+        assert_eq!(ev.button, Button::Left);
+        assert!(ev.modifiers.contains(Modifiers::SHIFT));
+        assert!(ev.modifiers.contains(Modifiers::ALT));
+        assert!(!ev.modifiers.contains(Modifiers::CTRL));
+    }
+
+    #[test]
+    fn left_with_alt_ctrl() {
+        // Cb = 0 + 8 + 16 = 24
+        let (ev, _) = parse(b"\x1b[<24;1;1M").unwrap();
+        assert_eq!(ev.button, Button::Left);
+        assert!(ev.modifiers.contains(Modifiers::ALT));
+        assert!(ev.modifiers.contains(Modifiers::CTRL));
+    }
+
+    #[test]
+    fn back_button_with_ctrl() {
+        // Cb = 128 (extra) + 16 (ctrl) = 144
+        let (ev, _) = parse(b"\x1b[<144;1;1M").unwrap();
+        assert_eq!(ev.button, Button::Back);
+        assert!(ev.modifiers.contains(Modifiers::CTRL));
+    }
+
+    #[test]
+    fn forward_button_with_shift() {
+        // Cb = 129 (extra+fwd) + 4 (shift) = 133
+        let (ev, _) = parse(b"\x1b[<133;1;1M").unwrap();
+        assert_eq!(ev.button, Button::Forward);
+        assert!(ev.modifiers.contains(Modifiers::SHIFT));
+    }
+
+    // ===================================================================
+    // 4. Scroll events with modifiers
+    // ===================================================================
+
+    #[test]
+    fn scroll_up_no_modifiers() {
+        let (ev, _) = parse(b"\x1b[<64;10;5M").unwrap();
+        assert_eq!(ev.event_type, MouseEventType::ScrollUp);
+        assert!(ev.modifiers.is_empty());
+        assert_eq!(ev.x, 9);
+        assert_eq!(ev.y, 4);
+    }
+
+    #[test]
+    fn scroll_down_with_shift() {
+        // Cb = 65 (scroll down) + 4 (shift) = 69
+        let (ev, _) = parse(b"\x1b[<69;1;1M").unwrap();
+        assert_eq!(ev.event_type, MouseEventType::ScrollDown);
+        assert!(ev.modifiers.contains(Modifiers::SHIFT));
+    }
+
+    #[test]
+    fn scroll_up_with_ctrl() {
+        // Cb = 64 + 16 = 80
+        let (ev, _) = parse(b"\x1b[<80;1;1M").unwrap();
+        assert_eq!(ev.event_type, MouseEventType::ScrollUp);
+        assert!(ev.modifiers.contains(Modifiers::CTRL));
+    }
+
+    #[test]
+    fn scroll_up_with_alt() {
+        // Cb = 64 + 8 = 72
+        let (ev, _) = parse(b"\x1b[<72;1;1M").unwrap();
+        assert_eq!(ev.event_type, MouseEventType::ScrollUp);
+        assert!(ev.modifiers.contains(Modifiers::ALT));
+    }
+
+    #[test]
+    fn scroll_down_with_all_modifiers() {
+        // Cb = 65 + 4 + 8 + 16 = 93
+        let (ev, _) = parse(b"\x1b[<93;1;1M").unwrap();
+        assert_eq!(ev.event_type, MouseEventType::ScrollDown);
+        assert!(ev.modifiers.contains(Modifiers::SHIFT));
+        assert!(ev.modifiers.contains(Modifiers::ALT));
+        assert!(ev.modifiers.contains(Modifiers::CTRL));
+    }
+
+    #[test]
+    fn scroll_left_with_ctrl() {
+        // Cb = 66 + 16 = 82
+        let (ev, _) = parse(b"\x1b[<82;1;1M").unwrap();
+        assert_eq!(ev.event_type, MouseEventType::ScrollLeft);
+        assert!(ev.modifiers.contains(Modifiers::CTRL));
+    }
+
+    #[test]
+    fn scroll_right_with_alt() {
+        // Cb = 67 + 8 = 75
+        let (ev, _) = parse(b"\x1b[<75;1;1M").unwrap();
+        assert_eq!(ev.event_type, MouseEventType::ScrollRight);
+        assert!(ev.modifiers.contains(Modifiers::ALT));
+    }
+
+    // ===================================================================
+    // 5. Move events with and without buttons held
+    // ===================================================================
+
+    #[test]
+    fn motion_with_right_held() {
+        // Cb = 32 (motion) + 2 (right) = 34
+        let (ev, _) = parse(b"\x1b[<34;10;10M").unwrap();
+        assert_eq!(ev.event_type, MouseEventType::Move);
+        assert_eq!(ev.button, Button::Right);
+    }
+
+    #[test]
+    fn motion_with_middle_held() {
+        // Cb = 32 + 1 = 33
+        let (ev, _) = parse(b"\x1b[<33;10;10M").unwrap();
+        assert_eq!(ev.event_type, MouseEventType::Move);
+        assert_eq!(ev.button, Button::Middle);
+    }
+
+    #[test]
+    fn motion_no_button_explicit() {
+        // Cb = 35 (motion + button bits 3 = none)
+        let (ev, _) = parse(b"\x1b[<35;50;25M").unwrap();
+        assert_eq!(ev.event_type, MouseEventType::Move);
+        assert_eq!(ev.button, Button::None);
+        assert_eq!(ev.x, 49);
+        assert_eq!(ev.y, 24);
+    }
+
+    #[test]
+    fn motion_with_left_and_shift() {
+        // Cb = 32 (motion) + 0 (left) + 4 (shift) = 36
+        let (ev, _) = parse(b"\x1b[<36;1;1M").unwrap();
+        assert_eq!(ev.event_type, MouseEventType::Move);
+        assert_eq!(ev.button, Button::Left);
+        assert!(ev.modifiers.contains(Modifiers::SHIFT));
+    }
+
+    #[test]
+    fn motion_with_right_and_ctrl() {
+        // Cb = 32 + 2 + 16 = 50
+        let (ev, _) = parse(b"\x1b[<50;1;1M").unwrap();
+        assert_eq!(ev.event_type, MouseEventType::Move);
+        assert_eq!(ev.button, Button::Right);
+        assert!(ev.modifiers.contains(Modifiers::CTRL));
+    }
+
+    #[test]
+    fn motion_with_all_modifiers_no_button() {
+        // Cb = 32 + 3 (no btn) + 4 + 8 + 16 = 63
+        let (ev, _) = parse(b"\x1b[<63;1;1M").unwrap();
+        assert_eq!(ev.event_type, MouseEventType::Move);
+        assert_eq!(ev.button, Button::None);
+        assert!(ev.modifiers.contains(Modifiers::SHIFT));
+        assert!(ev.modifiers.contains(Modifiers::ALT));
+        assert!(ev.modifiers.contains(Modifiers::CTRL));
+    }
+
+    // ===================================================================
+    // 6. Rapid sequential mouse events in one buffer
+    // ===================================================================
+
+    #[test]
+    fn sequential_press_then_release() {
+        let input = b"\x1b[<0;10;5M\x1b[<0;10;5m";
+        let (ev1, l1) = parse(input).unwrap();
+        assert_eq!(ev1.event_type, MouseEventType::Press);
+        assert_eq!(ev1.button, Button::Left);
+        let (ev2, _) = parse(&input[l1..]).unwrap();
+        assert_eq!(ev2.event_type, MouseEventType::Release);
+        assert_eq!(ev2.button, Button::Left);
+    }
+
+    #[test]
+    fn sequential_three_events() {
+        let input = b"\x1b[<0;1;1M\x1b[<32;2;2M\x1b[<0;3;3m";
+        let (ev1, l1) = parse(input).unwrap();
+        assert_eq!(ev1.event_type, MouseEventType::Press);
+
+        let (ev2, l2) = parse(&input[l1..]).unwrap();
+        assert_eq!(ev2.event_type, MouseEventType::Move);
+        assert_eq!(ev2.x, 1);
+
+        let (ev3, _) = parse(&input[l1 + l2..]).unwrap();
+        assert_eq!(ev3.event_type, MouseEventType::Release);
+        assert_eq!(ev3.x, 2);
+    }
+
+    #[test]
+    fn sequential_scroll_burst() {
+        let input = b"\x1b[<64;10;10M\x1b[<64;10;10M\x1b[<64;10;10M";
+        let (ev1, l1) = parse(input).unwrap();
+        assert_eq!(ev1.event_type, MouseEventType::ScrollUp);
+        let (ev2, l2) = parse(&input[l1..]).unwrap();
+        assert_eq!(ev2.event_type, MouseEventType::ScrollUp);
+        let (ev3, _) = parse(&input[l1 + l2..]).unwrap();
+        assert_eq!(ev3.event_type, MouseEventType::ScrollUp);
+    }
+
+    #[test]
+    fn sequential_mixed_buttons() {
+        let input = b"\x1b[<0;1;1M\x1b[<2;5;5M\x1b[<1;10;10M";
+        let (ev1, l1) = parse(input).unwrap();
+        assert_eq!(ev1.button, Button::Left);
+        let (ev2, l2) = parse(&input[l1..]).unwrap();
+        assert_eq!(ev2.button, Button::Right);
+        let (ev3, _) = parse(&input[l1 + l2..]).unwrap();
+        assert_eq!(ev3.button, Button::Middle);
+    }
+
+    #[test]
+    fn sequential_with_trailing_data() {
+        let input = b"\x1b[<0;1;1Mgarbage";
+        let (ev, len) = parse(input).unwrap();
+        assert_eq!(ev.event_type, MouseEventType::Press);
+        assert_eq!(len, 9);
+        // Remaining bytes should be "garbage".
+        assert_eq!(&input[len..], b"garbage");
+    }
+
+    // ===================================================================
+    // 7. SGR vs SGR-pixel format differences
+    // ===================================================================
+
+    #[test]
+    fn sgr_cell_coordinates() {
+        let (ev, _) = parse(b"\x1b[<0;80;24M").unwrap();
+        assert_eq!(ev.x, 79);
+        assert_eq!(ev.y, 23);
+        assert_eq!(ev.pixel_x, 0);
+        assert_eq!(ev.pixel_y, 0);
+    }
+
+    #[test]
+    fn sgr_pixel_coordinates() {
+        let (ev, _) = parse_pixel(b"\x1b[<0;640;384M", 8, 16).unwrap();
+        assert_eq!(ev.pixel_x, 639);
+        assert_eq!(ev.pixel_y, 383);
+        assert_eq!(ev.x, 79); // 639 / 8
+        assert_eq!(ev.y, 23); // 383 / 16
+    }
+
+    #[test]
+    fn sgr_pixel_zero_cell_size() {
+        // Zero cell size → cell coords become 0.
+        let (ev, _) = parse_pixel(b"\x1b[<0;100;100M", 0, 0).unwrap();
+        assert_eq!(ev.pixel_x, 99);
+        assert_eq!(ev.pixel_y, 99);
+        assert_eq!(ev.x, 0);
+        assert_eq!(ev.y, 0);
+    }
+
+    #[test]
+    fn sgr_pixel_small_cell_size() {
+        let (ev, _) = parse_pixel(b"\x1b[<0;17;33M", 8, 16).unwrap();
+        assert_eq!(ev.pixel_x, 16);
+        assert_eq!(ev.pixel_y, 32);
+        assert_eq!(ev.x, 2);
+        assert_eq!(ev.y, 2);
+    }
+
+    #[test]
+    fn sgr_pixel_subpixel_rounding() {
+        // Integer division truncates: 7 / 8 = 0.
+        let (ev, _) = parse_pixel(b"\x1b[<0;8;17M", 8, 16).unwrap();
+        assert_eq!(ev.pixel_x, 7); // 8-1
+        assert_eq!(ev.pixel_y, 16); // 17-1
+        assert_eq!(ev.x, 0); // 7 / 8 = 0
+        assert_eq!(ev.y, 1); // 16 / 16 = 1
+    }
+
+    #[test]
+    fn sgr_pixel_large_coords() {
+        // Large pixel coords: 8000 x 4000.
+        let (ev, _) = parse_pixel(b"\x1b[<0;8001;4001M", 8, 16).unwrap();
+        assert_eq!(ev.pixel_x, 8000);
+        assert_eq!(ev.pixel_y, 4000);
+        assert_eq!(ev.x, 1000);
+        assert_eq!(ev.y, 250);
+    }
+
+    #[test]
+    fn sgr_pixel_release() {
+        let (ev, _) = parse_pixel(b"\x1b[<0;81;161m", 8, 16).unwrap();
+        assert_eq!(ev.event_type, MouseEventType::Release);
+        assert_eq!(ev.pixel_x, 80);
+        assert_eq!(ev.pixel_y, 160);
+    }
+
+    #[test]
+    fn sgr_pixel_scroll() {
+        let (ev, _) = parse_pixel(b"\x1b[<64;81;161M", 8, 16).unwrap();
+        assert_eq!(ev.event_type, MouseEventType::ScrollUp);
+        assert_eq!(ev.pixel_x, 80);
+        assert_eq!(ev.pixel_y, 160);
+    }
+
+    // ===================================================================
+    // 8. Edge cases
+    // ===================================================================
+
+    #[test]
+    fn release_without_prior_press() {
+        // Release is valid on its own (terminal doesn't track state).
+        let (ev, _) = parse(b"\x1b[<0;10;5m").unwrap();
+        assert_eq!(ev.event_type, MouseEventType::Release);
+        assert_eq!(ev.button, Button::Left);
+    }
+
+    #[test]
+    fn release_right_button() {
+        let (ev, _) = parse(b"\x1b[<2;1;1m").unwrap();
+        assert_eq!(ev.event_type, MouseEventType::Release);
+        assert_eq!(ev.button, Button::Right);
+    }
+
+    #[test]
+    fn release_middle_button() {
+        let (ev, _) = parse(b"\x1b[<1;1;1m").unwrap();
+        assert_eq!(ev.event_type, MouseEventType::Release);
+        assert_eq!(ev.button, Button::Middle);
+    }
+
+    #[test]
+    fn move_at_terminal_origin() {
+        let (ev, _) = parse(b"\x1b[<35;1;1M").unwrap();
+        assert_eq!(ev.event_type, MouseEventType::Move);
+        assert_eq!(ev.x, 0);
+        assert_eq!(ev.y, 0);
+    }
+
+    #[test]
+    fn move_at_terminal_far_corner() {
+        let (ev, _) = parse(b"\x1b[<35;300;100M").unwrap();
+        assert_eq!(ev.event_type, MouseEventType::Move);
+        assert_eq!(ev.x, 299);
+        assert_eq!(ev.y, 99);
+    }
+
+    #[test]
+    fn with_pixel_coords_noop_when_already_set() {
+        let ev = MouseEvent {
+            event_type: MouseEventType::Press,
+            button: Button::Left,
+            x: 10,
+            y: 5,
+            pixel_x: 80,
+            pixel_y: 80,
+            modifiers: Modifiers::empty(),
+        }
+        .with_pixel_coords(8, 16);
+        // Should NOT overwrite already-set pixel coords.
+        assert_eq!(ev.pixel_x, 80);
+        assert_eq!(ev.pixel_y, 80);
+    }
+
+    #[test]
+    fn with_pixel_coords_zero_cell_size() {
+        let ev = MouseEvent {
+            event_type: MouseEventType::Press,
+            button: Button::Left,
+            x: 10,
+            y: 5,
+            pixel_x: 0,
+            pixel_y: 0,
+            modifiers: Modifiers::empty(),
+        }
+        .with_pixel_coords(0, 0);
+        // Zero cell size → no conversion.
+        assert_eq!(ev.pixel_x, 0);
+        assert_eq!(ev.pixel_y, 0);
+    }
+
+    #[test]
+    fn with_cell_coords_zero_cell_size() {
+        let ev = MouseEvent {
+            event_type: MouseEventType::Press,
+            button: Button::Left,
+            x: 0,
+            y: 0,
+            pixel_x: 100,
+            pixel_y: 200,
+            modifiers: Modifiers::empty(),
+        }
+        .with_cell_coords(0, 0);
+        // Zero cell size → x and y stay 0.
+        assert_eq!(ev.x, 0);
+        assert_eq!(ev.y, 0);
+    }
+
+    #[test]
+    fn extra_button_none_for_unknown_low_bits() {
+        // Cb = 130 (extra, low bits 2 → None for extra buttons)
+        let (ev, _) = parse(b"\x1b[<130;1;1M").unwrap();
+        assert_eq!(ev.button, Button::None);
+    }
+
+    #[test]
+    fn extra_button_three_is_none() {
+        // Cb = 131 (extra, low bits 3 → None)
+        let (ev, _) = parse(b"\x1b[<131;1;1M").unwrap();
+        assert_eq!(ev.button, Button::None);
+    }
+
+    // ===================================================================
+    // Additional: ParseError display coverage
+    // ===================================================================
+
+    #[test]
+    fn parse_error_display() {
+        assert_eq!(ParseError::Empty.to_string(), "empty input");
+        assert_eq!(
+            ParseError::NotMouseSequence.to_string(),
+            "not a mouse escape sequence"
+        );
+        assert_eq!(
+            ParseError::MalformedParams.to_string(),
+            "malformed SGR mouse parameters"
+        );
+        assert_eq!(ParseError::Incomplete.to_string(), "incomplete sequence");
+    }
+
+    // ===================================================================
+    // Additional: MouseEventType display full coverage
+    // ===================================================================
+
+    #[test]
+    fn event_type_display_full() {
+        assert_eq!(MouseEventType::Press.to_string(), "Press");
+        assert_eq!(MouseEventType::Release.to_string(), "Release");
+        assert_eq!(MouseEventType::Move.to_string(), "Move");
+        assert_eq!(MouseEventType::ScrollUp.to_string(), "ScrollUp");
+        assert_eq!(MouseEventType::ScrollDown.to_string(), "ScrollDown");
+        assert_eq!(MouseEventType::ScrollLeft.to_string(), "ScrollLeft");
+        assert_eq!(MouseEventType::ScrollRight.to_string(), "ScrollRight");
+    }
+
+    // ===================================================================
+    // Additional: Modifiers
+    // ===================================================================
+
+    #[test]
+    fn modifiers_bits_roundtrip() {
+        let m = Modifiers::SHIFT | Modifiers::CTRL;
+        assert_eq!(m.bits(), 0b0101);
+        let m2 = Modifiers::from_bits(m.bits());
+        assert_eq!(m, m2);
+    }
+
+    #[test]
+    fn modifiers_default_is_empty() {
+        let m = Modifiers::default();
+        assert!(m.is_empty());
+    }
+
+    // ===================================================================
+    // Additional: Consumed bytes edge cases
+    // ===================================================================
+
+    #[test]
+    fn consumed_bytes_minimal() {
+        // Minimum valid sequence: ESC [ < 0 ; 1 ; 1 M = 9 bytes.
+        let (_, len) = parse(b"\x1b[<0;1;1M").unwrap();
+        assert_eq!(len, 9);
+    }
+
+    #[test]
+    fn consumed_bytes_large_cb() {
+        // Cb = 128 → 3 digits.
+        let (_, len) = parse(b"\x1b[<128;1;1M").unwrap();
+        assert_eq!(len, 11);
+    }
+
+    #[test]
+    fn consumed_bytes_5digit_coords() {
+        let (_, len) = parse(b"\x1b[<0;10000;20000M").unwrap();
+        assert_eq!(len, 17);
+    }
+
+    // ===================================================================
+    // Additional: Motion with extra buttons
+    // ===================================================================
+
+    #[test]
+    fn motion_with_back_button() {
+        // Cb = 128 (extra back) + 32 (motion) = 160
+        let (ev, _) = parse(b"\x1b[<160;1;1M").unwrap();
+        assert_eq!(ev.event_type, MouseEventType::Move);
+        assert_eq!(ev.button, Button::Back);
+    }
+
+    #[test]
+    fn motion_with_forward_button() {
+        // Cb = 129 (extra fwd) + 32 (motion) = 161
+        let (ev, _) = parse(b"\x1b[<161;1;1M").unwrap();
+        assert_eq!(ev.event_type, MouseEventType::Move);
+        assert_eq!(ev.button, Button::Forward);
+    }
 }
