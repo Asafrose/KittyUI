@@ -1129,4 +1129,1102 @@ mod tests {
         let (_, len) = parse(input).unwrap();
         assert_eq!(len, 9); // ESC [ 97;5:3 u
     }
+
+    // ===================================================================
+    // 1. Malformed / incomplete sequences
+    // ===================================================================
+
+    #[test]
+    fn malformed_csi_no_final_byte() {
+        // CSI with only intermediate params, no final byte.
+        assert_eq!(parse(b"\x1b[1;2"), Err(ParseError::Incomplete));
+    }
+
+    #[test]
+    fn malformed_csi_non_numeric_params() {
+        // 'a' (0x61) is in the final byte range (0x40-0x7e), so CSI parser
+        // sees it as the final byte, not part of params. Unknown final 'a'.
+        assert_eq!(parse(b"\x1b[abcu"), Err(ParseError::UnknownFinal(b'a')));
+    }
+
+    #[test]
+    fn malformed_tilde_non_numeric() {
+        // 'x' (0x78) is a final byte, so parser dispatches on 'x'.
+        assert_eq!(parse(b"\x1b[xy~"), Err(ParseError::UnknownFinal(b'x')));
+    }
+
+    #[test]
+    fn malformed_kitty_u_bad_keycode() {
+        // Valid CSI with 'u' final but non-numeric first param.
+        // The intermediate bytes are all < 0x40, so parser reaches 'u' as final.
+        // But "1a" can't parse as u32.
+        assert_eq!(parse(b"\x1b[1a;2u"), Err(ParseError::UnknownFinal(b'a')));
+    }
+
+    #[test]
+    fn malformed_tilde_empty_params() {
+        // CSI with just ~ and no params — empty string can't parse as u32.
+        assert_eq!(parse(b"\x1b[~"), Err(ParseError::MalformedParams));
+    }
+
+    #[test]
+    fn truncated_escape_only() {
+        // Just ESC → bare escape key.
+        let (ev, len) = parse(b"\x1b").unwrap();
+        assert_eq!(ev.key, Key::Escape);
+        assert_eq!(len, 1);
+    }
+
+    #[test]
+    fn truncated_esc_o_only() {
+        // ESC O with no follow-up byte.
+        assert_eq!(parse(b"\x1bO"), Err(ParseError::Incomplete));
+    }
+
+    #[test]
+    fn unknown_csi_final_byte() {
+        let result = parse(b"\x1b[1;2Z");
+        assert_eq!(result, Err(ParseError::UnknownFinal(b'Z')));
+    }
+
+    #[test]
+    fn garbage_byte_0xff() {
+        let (ev, len) = parse(b"\xff").unwrap();
+        assert_eq!(ev.key, Key::Unknown(0xff));
+        assert_eq!(len, 1);
+    }
+
+    #[test]
+    fn garbage_byte_0xfe() {
+        let (ev, len) = parse(b"\xfe").unwrap();
+        assert_eq!(ev.key, Key::Unknown(0xfe));
+        assert_eq!(len, 1);
+    }
+
+    #[test]
+    fn incomplete_utf8_leading_byte_only() {
+        // 0xC3 is a 2-byte UTF-8 leader but no continuation.
+        assert_eq!(parse(&[0xC3]), Err(ParseError::Incomplete));
+    }
+
+    #[test]
+    fn incomplete_utf8_3byte_missing_one() {
+        // 0xE3 0x81 is start of a 3-byte char, missing final byte.
+        assert_eq!(parse(&[0xE3, 0x81]), Err(ParseError::Incomplete));
+    }
+
+    #[test]
+    fn incomplete_utf8_4byte_missing_two() {
+        assert_eq!(parse(&[0xF0, 0x9F]), Err(ParseError::Incomplete));
+    }
+
+    // ===================================================================
+    // 2. Boundary conditions
+    // ===================================================================
+
+    #[test]
+    fn single_byte_nul() {
+        let (ev, len) = parse(b"\x00").unwrap();
+        assert_eq!(ev.key, Key::Char(' '));
+        assert!(ev.modifiers.contains(Modifiers::CTRL));
+        assert_eq!(len, 1);
+    }
+
+    #[test]
+    fn single_byte_max_ascii() {
+        // DEL (0x7f) = Backspace.
+        let (ev, _) = parse(b"\x7f").unwrap();
+        assert_eq!(ev.key, Key::Backspace);
+    }
+
+    #[test]
+    fn very_long_kitty_codepoint() {
+        // Large valid unicode codepoint via Kitty protocol.
+        // U+1F600 = 128512
+        let (ev, _) = parse(b"\x1b[128512u").unwrap();
+        assert_eq!(ev.key, Key::Char('\u{1F600}'));
+    }
+
+    #[test]
+    fn invalid_unicode_codepoint() {
+        // 0xD800 is a surrogate, not valid char.
+        let (ev, _) = parse(b"\x1b[55296u").unwrap();
+        assert_eq!(ev.key, Key::Unknown(55296));
+    }
+
+    #[test]
+    fn codepoint_beyond_unicode_range() {
+        // 0x110000 is beyond Unicode max.
+        let (ev, _) = parse(b"\x1b[1114112u").unwrap();
+        assert_eq!(ev.key, Key::Unknown(1_114_112));
+    }
+
+    // ===================================================================
+    // 3. All modifier combinations
+    // ===================================================================
+
+    #[test]
+    fn modifier_shift_alone() {
+        // Kitty: mod 2 = shift (2-1=1=shift)
+        let (ev, _) = parse(b"\x1b[97;2u").unwrap();
+        assert_eq!(ev.modifiers, Modifiers::SHIFT);
+    }
+
+    #[test]
+    fn modifier_alt_alone() {
+        // mod 3 = alt (3-1=2=alt)
+        let (ev, _) = parse(b"\x1b[97;3u").unwrap();
+        assert_eq!(ev.modifiers, Modifiers::ALT);
+    }
+
+    #[test]
+    fn modifier_ctrl_alone() {
+        // mod 5 = ctrl (5-1=4=ctrl)
+        let (ev, _) = parse(b"\x1b[97;5u").unwrap();
+        assert_eq!(ev.modifiers, Modifiers::CTRL);
+    }
+
+    #[test]
+    fn modifier_super_alone() {
+        // mod 9 = super (9-1=8=super)
+        let (ev, _) = parse(b"\x1b[97;9u").unwrap();
+        assert_eq!(ev.modifiers, Modifiers::SUPER);
+    }
+
+    #[test]
+    fn modifier_shift_alt() {
+        // mod 4 = shift+alt (4-1=3=shift|alt)
+        let (ev, _) = parse(b"\x1b[97;4u").unwrap();
+        assert!(ev.modifiers.contains(Modifiers::SHIFT));
+        assert!(ev.modifiers.contains(Modifiers::ALT));
+        assert!(!ev.modifiers.contains(Modifiers::CTRL));
+    }
+
+    #[test]
+    fn modifier_shift_ctrl() {
+        // mod 6 = shift+ctrl (6-1=5=shift|ctrl)
+        let (ev, _) = parse(b"\x1b[97;6u").unwrap();
+        assert!(ev.modifiers.contains(Modifiers::SHIFT));
+        assert!(ev.modifiers.contains(Modifiers::CTRL));
+    }
+
+    #[test]
+    fn modifier_alt_ctrl() {
+        // mod 7 = alt+ctrl (7-1=6=alt|ctrl)
+        let (ev, _) = parse(b"\x1b[97;7u").unwrap();
+        assert!(ev.modifiers.contains(Modifiers::ALT));
+        assert!(ev.modifiers.contains(Modifiers::CTRL));
+    }
+
+    #[test]
+    fn modifier_shift_alt_ctrl() {
+        // mod 8 = shift+alt+ctrl (8-1=7)
+        let (ev, _) = parse(b"\x1b[97;8u").unwrap();
+        assert!(ev.modifiers.contains(Modifiers::SHIFT));
+        assert!(ev.modifiers.contains(Modifiers::ALT));
+        assert!(ev.modifiers.contains(Modifiers::CTRL));
+        assert!(!ev.modifiers.contains(Modifiers::SUPER));
+    }
+
+    #[test]
+    fn modifier_all_four() {
+        // mod 16 = all (16-1=15=shift|alt|ctrl|super)
+        let (ev, _) = parse(b"\x1b[97;16u").unwrap();
+        assert!(ev.modifiers.contains(Modifiers::SHIFT));
+        assert!(ev.modifiers.contains(Modifiers::ALT));
+        assert!(ev.modifiers.contains(Modifiers::CTRL));
+        assert!(ev.modifiers.contains(Modifiers::SUPER));
+    }
+
+    #[test]
+    fn modifier_ctrl_super() {
+        // mod 13 = ctrl+super (13-1=12=ctrl|super=4|8)
+        let (ev, _) = parse(b"\x1b[97;13u").unwrap();
+        assert!(ev.modifiers.contains(Modifiers::CTRL));
+        assert!(ev.modifiers.contains(Modifiers::SUPER));
+        assert!(!ev.modifiers.contains(Modifiers::SHIFT));
+        assert!(!ev.modifiers.contains(Modifiers::ALT));
+    }
+
+    #[test]
+    fn modifier_shift_with_arrow() {
+        let (ev, _) = parse(b"\x1b[1;2B").unwrap();
+        assert_eq!(ev.key, Key::Down);
+        assert_eq!(ev.modifiers, Modifiers::SHIFT);
+    }
+
+    #[test]
+    fn modifier_ctrl_with_home() {
+        let (ev, _) = parse(b"\x1b[1;5H").unwrap();
+        assert_eq!(ev.key, Key::Home);
+        assert!(ev.modifiers.contains(Modifiers::CTRL));
+    }
+
+    #[test]
+    fn modifier_alt_with_end() {
+        let (ev, _) = parse(b"\x1b[1;3F").unwrap();
+        assert_eq!(ev.key, Key::End);
+        assert!(ev.modifiers.contains(Modifiers::ALT));
+    }
+
+    #[test]
+    fn modifier_shift_with_tilde_delete() {
+        let (ev, _) = parse(b"\x1b[3;2~").unwrap();
+        assert_eq!(ev.key, Key::Delete);
+        assert!(ev.modifiers.contains(Modifiers::SHIFT));
+    }
+
+    #[test]
+    fn modifier_ctrl_with_tilde_pageup() {
+        let (ev, _) = parse(b"\x1b[5;5~").unwrap();
+        assert_eq!(ev.key, Key::PageUp);
+        assert!(ev.modifiers.contains(Modifiers::CTRL));
+    }
+
+    // ===================================================================
+    // 4. Unicode edge cases
+    // ===================================================================
+
+    #[test]
+    fn utf8_2byte_latin_supplement() {
+        // ñ = U+00F1
+        let (ev, len) = parse("ñ".as_bytes()).unwrap();
+        assert_eq!(ev.key, Key::Char('ñ'));
+        assert_eq!(len, 2);
+    }
+
+    #[test]
+    fn utf8_3byte_korean() {
+        // 한 = U+D55C
+        let (ev, len) = parse("한".as_bytes()).unwrap();
+        assert_eq!(ev.key, Key::Char('한'));
+        assert_eq!(len, 3);
+    }
+
+    #[test]
+    fn utf8_4byte_math_symbol() {
+        // 𝄞 (musical symbol G clef) = U+1D11E
+        let (ev, len) = parse("𝄞".as_bytes()).unwrap();
+        assert_eq!(ev.key, Key::Char('𝄞'));
+        assert_eq!(len, 4);
+    }
+
+    #[test]
+    fn utf8_4byte_emoji_face() {
+        // 😀 = U+1F600
+        let (ev, len) = parse("😀".as_bytes()).unwrap();
+        assert_eq!(ev.key, Key::Char('😀'));
+        assert_eq!(len, 4);
+    }
+
+    #[test]
+    fn utf8_combining_accent() {
+        // e followed by combining acute: "e\u{0301}" — parser only reads first char.
+        let input = "e\u{0301}".as_bytes();
+        let (ev, len) = parse(input).unwrap();
+        assert_eq!(ev.key, Key::Char('e'));
+        assert_eq!(len, 1);
+    }
+
+    #[test]
+    fn utf8_bom_character() {
+        // U+FEFF BOM
+        let (ev, len) = parse("\u{FEFF}".as_bytes()).unwrap();
+        assert_eq!(ev.key, Key::Char('\u{FEFF}'));
+        assert_eq!(len, 3);
+    }
+
+    #[test]
+    fn kitty_emoji_codepoint() {
+        // 🎉 = U+1F389 = 127881 via Kitty protocol.
+        let (ev, _) = parse(b"\x1b[127881u").unwrap();
+        assert_eq!(ev.key, Key::Char('🎉'));
+    }
+
+    #[test]
+    fn utf8_multibyte_followed_by_more() {
+        // Parse only first char from multi-char input.
+        let input = "éàü".as_bytes();
+        let (ev, len) = parse(input).unwrap();
+        assert_eq!(ev.key, Key::Char('é'));
+        assert_eq!(len, 2);
+    }
+
+    // ===================================================================
+    // 5. Kitty protocol specifics
+    // ===================================================================
+
+    #[test]
+    fn kitty_shifted_key_reporting() {
+        // CSI 97:65u → 'a' with shifted key 'A' (65).
+        let (ev, _) = parse(b"\x1b[97:65u").unwrap();
+        assert_eq!(ev.key, Key::Char('a'));
+    }
+
+    #[test]
+    fn kitty_shifted_and_base_key() {
+        // CSI 97:65:97u → key='a', shifted='A', base='a'.
+        let (ev, _) = parse(b"\x1b[97:65:97u").unwrap();
+        assert_eq!(ev.key, Key::Char('a'));
+    }
+
+    #[test]
+    fn kitty_press_event_explicit() {
+        // CSI 97;1:1u → explicit press event.
+        let (ev, _) = parse(b"\x1b[97;1:1u").unwrap();
+        assert_eq!(ev.key, Key::Char('a'));
+        assert_eq!(ev.event_type, EventType::Press);
+    }
+
+    #[test]
+    fn kitty_repeat_event() {
+        let (ev, _) = parse(b"\x1b[97;1:2u").unwrap();
+        assert_eq!(ev.event_type, EventType::Repeat);
+    }
+
+    #[test]
+    fn kitty_release_event() {
+        let (ev, _) = parse(b"\x1b[97;1:3u").unwrap();
+        assert_eq!(ev.event_type, EventType::Release);
+    }
+
+    #[test]
+    fn kitty_ctrl_repeat() {
+        // CSI 97;5:2u → Ctrl+'a' repeat
+        let (ev, _) = parse(b"\x1b[97;5:2u").unwrap();
+        assert!(ev.modifiers.contains(Modifiers::CTRL));
+        assert_eq!(ev.event_type, EventType::Repeat);
+    }
+
+    #[test]
+    fn kitty_all_mods_release() {
+        // CSI 97;16:3u → all modifiers + release.
+        let (ev, _) = parse(b"\x1b[97;16:3u").unwrap();
+        assert!(ev.modifiers.contains(Modifiers::SHIFT));
+        assert!(ev.modifiers.contains(Modifiers::ALT));
+        assert!(ev.modifiers.contains(Modifiers::CTRL));
+        assert!(ev.modifiers.contains(Modifiers::SUPER));
+        assert_eq!(ev.event_type, EventType::Release);
+    }
+
+    #[test]
+    fn kitty_special_capslock() {
+        let (ev, _) = parse(b"\x1b[57358u").unwrap();
+        assert_eq!(ev.key, Key::CapsLock);
+    }
+
+    #[test]
+    fn kitty_special_scrolllock() {
+        let (ev, _) = parse(b"\x1b[57359u").unwrap();
+        assert_eq!(ev.key, Key::ScrollLock);
+    }
+
+    #[test]
+    fn kitty_special_numlock() {
+        let (ev, _) = parse(b"\x1b[57360u").unwrap();
+        assert_eq!(ev.key, Key::NumLock);
+    }
+
+    #[test]
+    fn kitty_special_printscreen() {
+        let (ev, _) = parse(b"\x1b[57361u").unwrap();
+        assert_eq!(ev.key, Key::PrintScreen);
+    }
+
+    #[test]
+    fn kitty_special_pause() {
+        let (ev, _) = parse(b"\x1b[57362u").unwrap();
+        assert_eq!(ev.key, Key::Pause);
+    }
+
+    #[test]
+    fn kitty_special_menu() {
+        let (ev, _) = parse(b"\x1b[57363u").unwrap();
+        assert_eq!(ev.key, Key::Menu);
+    }
+
+    #[test]
+    fn kitty_nav_insert() {
+        let (ev, _) = parse(b"\x1b[57352u").unwrap();
+        assert_eq!(ev.key, Key::Insert);
+    }
+
+    #[test]
+    fn kitty_nav_delete() {
+        let (ev, _) = parse(b"\x1b[57353u").unwrap();
+        assert_eq!(ev.key, Key::Delete);
+    }
+
+    #[test]
+    fn kitty_nav_home() {
+        let (ev, _) = parse(b"\x1b[57354u").unwrap();
+        assert_eq!(ev.key, Key::Home);
+    }
+
+    #[test]
+    fn kitty_nav_end() {
+        let (ev, _) = parse(b"\x1b[57355u").unwrap();
+        assert_eq!(ev.key, Key::End);
+    }
+
+    #[test]
+    fn kitty_nav_pageup() {
+        let (ev, _) = parse(b"\x1b[57356u").unwrap();
+        assert_eq!(ev.key, Key::PageUp);
+    }
+
+    #[test]
+    fn kitty_nav_pagedown() {
+        let (ev, _) = parse(b"\x1b[57357u").unwrap();
+        assert_eq!(ev.key, Key::PageDown);
+    }
+
+    #[test]
+    fn kitty_nav_up() {
+        let (ev, _) = parse(b"\x1b[57350u").unwrap();
+        assert_eq!(ev.key, Key::Up);
+    }
+
+    #[test]
+    fn kitty_nav_down() {
+        let (ev, _) = parse(b"\x1b[57351u").unwrap();
+        assert_eq!(ev.key, Key::Down);
+    }
+
+    #[test]
+    fn kitty_nav_right() {
+        let (ev, _) = parse(b"\x1b[57349u").unwrap();
+        assert_eq!(ev.key, Key::Right);
+    }
+
+    #[test]
+    fn kitty_nav_left() {
+        let (ev, _) = parse(b"\x1b[57348u").unwrap();
+        assert_eq!(ev.key, Key::Left);
+    }
+
+    #[test]
+    fn kitty_backspace_codepoint_8() {
+        let (ev, _) = parse(b"\x1b[8u").unwrap();
+        assert_eq!(ev.key, Key::Backspace);
+    }
+
+    // ===================================================================
+    // 6. Legacy sequence disambiguation
+    // ===================================================================
+
+    #[test]
+    fn legacy_home_tilde_7() {
+        // Some terminals send ESC[7~ for Home.
+        let (ev, _) = parse(b"\x1b[7~").unwrap();
+        assert_eq!(ev.key, Key::Home);
+    }
+
+    #[test]
+    fn legacy_end_tilde_8() {
+        let (ev, _) = parse(b"\x1b[8~").unwrap();
+        assert_eq!(ev.key, Key::End);
+    }
+
+    #[test]
+    fn legacy_home_tilde_1() {
+        let (ev, _) = parse(b"\x1b[1~").unwrap();
+        assert_eq!(ev.key, Key::Home);
+    }
+
+    #[test]
+    fn legacy_end_tilde_4() {
+        let (ev, _) = parse(b"\x1b[4~").unwrap();
+        assert_eq!(ev.key, Key::End);
+    }
+
+    #[test]
+    fn legacy_f1_tilde_11() {
+        let (ev, _) = parse(b"\x1b[11~").unwrap();
+        assert_eq!(ev.key, Key::F(1));
+    }
+
+    #[test]
+    fn legacy_f4_tilde_14() {
+        let (ev, _) = parse(b"\x1b[14~").unwrap();
+        assert_eq!(ev.key, Key::F(4));
+    }
+
+    #[test]
+    fn csi_f1_via_p() {
+        // CSI P = F1 (xterm encoding).
+        let (ev, _) = parse(b"\x1b[P").unwrap();
+        assert_eq!(ev.key, Key::F(1));
+    }
+
+    #[test]
+    fn csi_f2_via_q() {
+        let (ev, _) = parse(b"\x1b[Q").unwrap();
+        assert_eq!(ev.key, Key::F(2));
+    }
+
+    #[test]
+    fn csi_f3_via_r() {
+        let (ev, _) = parse(b"\x1b[R").unwrap();
+        assert_eq!(ev.key, Key::F(3));
+    }
+
+    #[test]
+    fn csi_f4_via_s() {
+        let (ev, _) = parse(b"\x1b[S").unwrap();
+        assert_eq!(ev.key, Key::F(4));
+    }
+
+    #[test]
+    fn unknown_tilde_key_number() {
+        let (ev, _) = parse(b"\x1b[99~").unwrap();
+        assert_eq!(ev.key, Key::Unknown(99));
+    }
+
+    // ===================================================================
+    // 7. Rapid sequential events (multiple in one buffer)
+    // ===================================================================
+
+    #[test]
+    fn sequential_two_plain_chars() {
+        let input = b"ab";
+        let (ev1, len1) = parse(input).unwrap();
+        assert_eq!(ev1.key, Key::Char('a'));
+        assert_eq!(len1, 1);
+        let (ev2, len2) = parse(&input[len1..]).unwrap();
+        assert_eq!(ev2.key, Key::Char('b'));
+        assert_eq!(len2, 1);
+    }
+
+    #[test]
+    fn sequential_csi_then_plain() {
+        let input = b"\x1b[Ax";
+        let (ev1, len1) = parse(input).unwrap();
+        assert_eq!(ev1.key, Key::Up);
+        assert_eq!(len1, 3);
+        let (ev2, _) = parse(&input[len1..]).unwrap();
+        assert_eq!(ev2.key, Key::Char('x'));
+    }
+
+    #[test]
+    fn sequential_kitty_events() {
+        let input = b"\x1b[97;1:1u\x1b[97;1:2u\x1b[97;1:3u";
+        let (ev1, l1) = parse(input).unwrap();
+        assert_eq!(ev1.event_type, EventType::Press);
+        let (ev2, l2) = parse(&input[l1..]).unwrap();
+        assert_eq!(ev2.event_type, EventType::Repeat);
+        let (ev3, _) = parse(&input[l1 + l2..]).unwrap();
+        assert_eq!(ev3.event_type, EventType::Release);
+    }
+
+    #[test]
+    fn sequential_mixed_utf8_and_csi() {
+        let mut input = Vec::new();
+        input.extend_from_slice("é".as_bytes());
+        input.extend_from_slice(b"\x1b[B");
+        input.extend_from_slice("あ".as_bytes());
+
+        let (ev1, l1) = parse(&input).unwrap();
+        assert_eq!(ev1.key, Key::Char('é'));
+        assert_eq!(l1, 2);
+
+        let (ev2, l2) = parse(&input[l1..]).unwrap();
+        assert_eq!(ev2.key, Key::Down);
+        assert_eq!(l2, 3);
+
+        let (ev3, l3) = parse(&input[l1 + l2..]).unwrap();
+        assert_eq!(ev3.key, Key::Char('あ'));
+        assert_eq!(l3, 3);
+    }
+
+    #[test]
+    fn sequential_three_arrows() {
+        let input = b"\x1b[A\x1b[B\x1b[C";
+        let (ev1, l1) = parse(input).unwrap();
+        assert_eq!(ev1.key, Key::Up);
+        let (ev2, l2) = parse(&input[l1..]).unwrap();
+        assert_eq!(ev2.key, Key::Down);
+        let (ev3, _) = parse(&input[l1 + l2..]).unwrap();
+        assert_eq!(ev3.key, Key::Right);
+    }
+
+    // ===================================================================
+    // 8. All special keys in Key enum
+    // ===================================================================
+
+    // Most are tested above, but ensure explicit coverage for every variant.
+
+    #[test]
+    fn key_up_csi() {
+        let (ev, _) = parse(b"\x1b[A").unwrap();
+        assert_eq!(ev.key, Key::Up);
+    }
+
+    #[test]
+    fn key_down_csi() {
+        let (ev, _) = parse(b"\x1b[B").unwrap();
+        assert_eq!(ev.key, Key::Down);
+    }
+
+    #[test]
+    fn key_right_csi() {
+        let (ev, _) = parse(b"\x1b[C").unwrap();
+        assert_eq!(ev.key, Key::Right);
+    }
+
+    #[test]
+    fn key_left_csi() {
+        let (ev, _) = parse(b"\x1b[D").unwrap();
+        assert_eq!(ev.key, Key::Left);
+    }
+
+    #[test]
+    fn key_home_csi() {
+        let (ev, _) = parse(b"\x1b[H").unwrap();
+        assert_eq!(ev.key, Key::Home);
+    }
+
+    #[test]
+    fn key_end_csi() {
+        let (ev, _) = parse(b"\x1b[F").unwrap();
+        assert_eq!(ev.key, Key::End);
+    }
+
+    #[test]
+    fn key_insert_tilde() {
+        let (ev, _) = parse(b"\x1b[2~").unwrap();
+        assert_eq!(ev.key, Key::Insert);
+    }
+
+    #[test]
+    fn key_delete_tilde() {
+        let (ev, _) = parse(b"\x1b[3~").unwrap();
+        assert_eq!(ev.key, Key::Delete);
+    }
+
+    #[test]
+    fn key_pageup_tilde() {
+        let (ev, _) = parse(b"\x1b[5~").unwrap();
+        assert_eq!(ev.key, Key::PageUp);
+    }
+
+    #[test]
+    fn key_pagedown_tilde() {
+        let (ev, _) = parse(b"\x1b[6~").unwrap();
+        assert_eq!(ev.key, Key::PageDown);
+    }
+
+    #[test]
+    fn key_enter_byte() {
+        let (ev, _) = parse(b"\r").unwrap();
+        assert_eq!(ev.key, Key::Enter);
+    }
+
+    #[test]
+    fn key_tab_byte() {
+        let (ev, _) = parse(b"\t").unwrap();
+        assert_eq!(ev.key, Key::Tab);
+    }
+
+    #[test]
+    fn key_backspace_byte() {
+        let (ev, _) = parse(b"\x7f").unwrap();
+        assert_eq!(ev.key, Key::Backspace);
+    }
+
+    #[test]
+    fn key_escape_bare() {
+        let (ev, _) = parse(b"\x1b").unwrap();
+        assert_eq!(ev.key, Key::Escape);
+    }
+
+    #[test]
+    fn key_unknown_variant() {
+        // Unknown tilde code.
+        let (ev, _) = parse(b"\x1b[42~").unwrap();
+        assert_eq!(ev.key, Key::Unknown(42));
+    }
+
+    // ===================================================================
+    // 9. Function keys F1–F24
+    // ===================================================================
+
+    // F1-F4 via SS3.
+    #[test]
+    fn ss3_f1() {
+        let (ev, _) = parse(b"\x1bOP").unwrap();
+        assert_eq!(ev.key, Key::F(1));
+    }
+
+    #[test]
+    fn ss3_f2() {
+        let (ev, _) = parse(b"\x1bOQ").unwrap();
+        assert_eq!(ev.key, Key::F(2));
+    }
+
+    #[test]
+    fn ss3_f3() {
+        let (ev, _) = parse(b"\x1bOR").unwrap();
+        assert_eq!(ev.key, Key::F(3));
+    }
+
+    #[test]
+    fn ss3_f4() {
+        let (ev, _) = parse(b"\x1bOS").unwrap();
+        assert_eq!(ev.key, Key::F(4));
+    }
+
+    // F1-F4 via tilde encoding.
+    #[test]
+    fn tilde_f1() {
+        let (ev, _) = parse(b"\x1b[11~").unwrap();
+        assert_eq!(ev.key, Key::F(1));
+    }
+
+    #[test]
+    fn tilde_f2() {
+        let (ev, _) = parse(b"\x1b[12~").unwrap();
+        assert_eq!(ev.key, Key::F(2));
+    }
+
+    #[test]
+    fn tilde_f3() {
+        let (ev, _) = parse(b"\x1b[13~").unwrap();
+        assert_eq!(ev.key, Key::F(3));
+    }
+
+    #[test]
+    fn tilde_f4() {
+        let (ev, _) = parse(b"\x1b[14~").unwrap();
+        assert_eq!(ev.key, Key::F(4));
+    }
+
+    #[test]
+    fn tilde_f5() {
+        let (ev, _) = parse(b"\x1b[15~").unwrap();
+        assert_eq!(ev.key, Key::F(5));
+    }
+
+    #[test]
+    fn tilde_f6() {
+        let (ev, _) = parse(b"\x1b[17~").unwrap();
+        assert_eq!(ev.key, Key::F(6));
+    }
+
+    #[test]
+    fn tilde_f7() {
+        let (ev, _) = parse(b"\x1b[18~").unwrap();
+        assert_eq!(ev.key, Key::F(7));
+    }
+
+    #[test]
+    fn tilde_f8() {
+        let (ev, _) = parse(b"\x1b[19~").unwrap();
+        assert_eq!(ev.key, Key::F(8));
+    }
+
+    #[test]
+    fn tilde_f9() {
+        let (ev, _) = parse(b"\x1b[20~").unwrap();
+        assert_eq!(ev.key, Key::F(9));
+    }
+
+    #[test]
+    fn tilde_f10() {
+        let (ev, _) = parse(b"\x1b[21~").unwrap();
+        assert_eq!(ev.key, Key::F(10));
+    }
+
+    #[test]
+    fn tilde_f11() {
+        let (ev, _) = parse(b"\x1b[23~").unwrap();
+        assert_eq!(ev.key, Key::F(11));
+    }
+
+    #[test]
+    fn tilde_f12() {
+        let (ev, _) = parse(b"\x1b[24~").unwrap();
+        assert_eq!(ev.key, Key::F(12));
+    }
+
+    // F13-F24 via Kitty codepoints.
+    #[test]
+    fn kitty_f13() {
+        let (ev, _) = parse(b"\x1b[57364u").unwrap();
+        assert_eq!(ev.key, Key::F(13));
+    }
+
+    #[test]
+    fn kitty_f14() {
+        let (ev, _) = parse(b"\x1b[57365u").unwrap();
+        assert_eq!(ev.key, Key::F(14));
+    }
+
+    #[test]
+    fn kitty_f20() {
+        let (ev, _) = parse(b"\x1b[57371u").unwrap();
+        assert_eq!(ev.key, Key::F(20));
+    }
+
+    #[test]
+    fn kitty_f24() {
+        let (ev, _) = parse(b"\x1b[57375u").unwrap();
+        assert_eq!(ev.key, Key::F(24));
+    }
+
+    #[test]
+    fn kitty_f35() {
+        // F35 = 57364 + 35 - 13 = 57386
+        let (ev, _) = parse(b"\x1b[57386u").unwrap();
+        assert_eq!(ev.key, Key::F(35));
+    }
+
+    // F5 with modifiers (tilde encoding).
+    #[test]
+    fn f5_with_shift() {
+        let (ev, _) = parse(b"\x1b[15;2~").unwrap();
+        assert_eq!(ev.key, Key::F(5));
+        assert!(ev.modifiers.contains(Modifiers::SHIFT));
+    }
+
+    #[test]
+    fn f12_with_ctrl() {
+        let (ev, _) = parse(b"\x1b[24;5~").unwrap();
+        assert_eq!(ev.key, Key::F(12));
+        assert!(ev.modifiers.contains(Modifiers::CTRL));
+    }
+
+    // ===================================================================
+    // 10. Compose/IME sequences
+    // ===================================================================
+
+    #[test]
+    fn compose_start_finish() {
+        let mut cs = ComposeState::new();
+        assert!(!cs.active);
+        cs.start();
+        assert!(cs.active);
+        cs.feed('a');
+        let result = cs.finish();
+        assert_eq!(result, "a");
+        assert!(!cs.active);
+    }
+
+    #[test]
+    fn compose_cancel_clears() {
+        let mut cs = ComposeState::new();
+        cs.start();
+        cs.feed('x');
+        cs.feed('y');
+        cs.cancel();
+        assert!(!cs.active);
+        assert!(cs.buffer.is_empty());
+    }
+
+    #[test]
+    fn compose_multi_step() {
+        let mut cs = ComposeState::new();
+        cs.start();
+        cs.feed('\'');
+        cs.feed('e');
+        let result = cs.finish();
+        assert_eq!(result, "'e");
+    }
+
+    #[test]
+    fn compose_with_combining_chars() {
+        let mut cs = ComposeState::new();
+        cs.start();
+        cs.feed('a');
+        cs.feed('\u{0308}'); // combining diaeresis
+        let result = cs.finish();
+        assert_eq!(result, "a\u{0308}");
+    }
+
+    #[test]
+    fn compose_restart_after_finish() {
+        let mut cs = ComposeState::new();
+        cs.start();
+        cs.feed('a');
+        let _ = cs.finish();
+
+        // Start new compose.
+        cs.start();
+        assert!(cs.buffer.is_empty());
+        cs.feed('b');
+        let result = cs.finish();
+        assert_eq!(result, "b");
+    }
+
+    #[test]
+    fn compose_restart_after_cancel() {
+        let mut cs = ComposeState::new();
+        cs.start();
+        cs.feed('x');
+        cs.cancel();
+
+        cs.start();
+        cs.feed('y');
+        let result = cs.finish();
+        assert_eq!(result, "y");
+    }
+
+    #[test]
+    fn compose_default_trait() {
+        let cs = ComposeState::default();
+        assert!(!cs.active);
+        assert!(cs.buffer.is_empty());
+    }
+
+    // ===================================================================
+    // Additional: Alt+key combos
+    // ===================================================================
+
+    #[test]
+    fn alt_enter() {
+        let (ev, len) = parse(b"\x1b\r").unwrap();
+        assert_eq!(ev.key, Key::Enter);
+        assert!(ev.modifiers.contains(Modifiers::ALT));
+        assert_eq!(len, 2);
+    }
+
+    #[test]
+    fn alt_tab() {
+        let (ev, len) = parse(b"\x1b\t").unwrap();
+        assert_eq!(ev.key, Key::Tab);
+        assert!(ev.modifiers.contains(Modifiers::ALT));
+        assert_eq!(len, 2);
+    }
+
+    #[test]
+    fn alt_number() {
+        let (ev, _) = parse(b"\x1b1").unwrap();
+        assert_eq!(ev.key, Key::Char('1'));
+        assert!(ev.modifiers.contains(Modifiers::ALT));
+    }
+
+    #[test]
+    fn alt_special_char() {
+        let (ev, _) = parse(b"\x1b!").unwrap();
+        assert_eq!(ev.key, Key::Char('!'));
+        assert!(ev.modifiers.contains(Modifiers::ALT));
+    }
+
+    // ===================================================================
+    // Additional: Display / formatting
+    // ===================================================================
+
+    #[test]
+    fn key_display_all_variants() {
+        assert_eq!(Key::Char('x').to_string(), "x");
+        assert_eq!(Key::F(5).to_string(), "F5");
+        assert_eq!(Key::Up.to_string(), "Up");
+        assert_eq!(Key::Down.to_string(), "Down");
+        assert_eq!(Key::Left.to_string(), "Left");
+        assert_eq!(Key::Right.to_string(), "Right");
+        assert_eq!(Key::Home.to_string(), "Home");
+        assert_eq!(Key::End.to_string(), "End");
+        assert_eq!(Key::PageUp.to_string(), "PageUp");
+        assert_eq!(Key::PageDown.to_string(), "PageDown");
+        assert_eq!(Key::Insert.to_string(), "Insert");
+        assert_eq!(Key::Delete.to_string(), "Delete");
+        assert_eq!(Key::Enter.to_string(), "Enter");
+        assert_eq!(Key::Tab.to_string(), "Tab");
+        assert_eq!(Key::Backspace.to_string(), "Backspace");
+        assert_eq!(Key::Escape.to_string(), "Escape");
+        assert_eq!(Key::CapsLock.to_string(), "CapsLock");
+        assert_eq!(Key::ScrollLock.to_string(), "ScrollLock");
+        assert_eq!(Key::NumLock.to_string(), "NumLock");
+        assert_eq!(Key::PrintScreen.to_string(), "PrintScreen");
+        assert_eq!(Key::Pause.to_string(), "Pause");
+        assert_eq!(Key::Menu.to_string(), "Menu");
+        assert_eq!(Key::Unknown(999).to_string(), "Unknown(999)");
+    }
+
+    #[test]
+    fn key_event_display_all_modifiers() {
+        let ev = KeyEvent::new(
+            Key::Char('a'),
+            Modifiers::CTRL | Modifiers::ALT | Modifiers::SHIFT | Modifiers::SUPER,
+            EventType::Press,
+        );
+        assert_eq!(ev.to_string(), "Ctrl+Alt+Shift+Super+a");
+    }
+
+    #[test]
+    fn key_event_display_super_key() {
+        let ev = KeyEvent::new(Key::Char('s'), Modifiers::SUPER, EventType::Press);
+        assert_eq!(ev.to_string(), "Super+s");
+    }
+
+    // ===================================================================
+    // Additional: ParseError display
+    // ===================================================================
+
+    #[test]
+    fn parse_error_display() {
+        assert_eq!(ParseError::Empty.to_string(), "empty input");
+        assert_eq!(
+            ParseError::NotEscapeSequence.to_string(),
+            "not an escape sequence"
+        );
+        assert_eq!(
+            ParseError::MalformedParams.to_string(),
+            "malformed CSI parameters"
+        );
+        assert_eq!(
+            ParseError::UnknownFinal(0x5a).to_string(),
+            "unknown CSI final byte: 0x5a"
+        );
+        assert_eq!(ParseError::Incomplete.to_string(), "incomplete sequence");
+    }
+
+    // ===================================================================
+    // Additional: Ctrl+letter coverage
+    // ===================================================================
+
+    #[test]
+    fn ctrl_b_through_y() {
+        // Ctrl+B = 0x02, Ctrl+Y = 0x19
+        for b in 0x02..=0x19_u8 {
+            // Skip 0x09 (Tab), 0x0d (Enter)
+            if b == 0x09 || b == 0x0d {
+                continue;
+            }
+            let (ev, _) = parse(&[b]).unwrap();
+            let expected_char = (b + b'a' - 1) as char;
+            assert_eq!(ev.key, Key::Char(expected_char), "Ctrl+{expected_char}");
+            assert!(ev.modifiers.contains(Modifiers::CTRL));
+        }
+    }
+
+    // ===================================================================
+    // Additional: Modifiers bitops
+    // ===================================================================
+
+    #[test]
+    fn modifiers_bitand() {
+        let m = Modifiers::CTRL | Modifiers::ALT;
+        let masked = m & Modifiers::CTRL;
+        assert!(masked.contains(Modifiers::CTRL));
+        assert!(!masked.contains(Modifiers::ALT));
+    }
+
+    #[test]
+    fn modifiers_bits_roundtrip() {
+        let m = Modifiers::SHIFT | Modifiers::SUPER;
+        assert_eq!(m.bits(), 0b0000_1001);
+        let m2 = Modifiers::from_bits_truncate(m.bits());
+        assert_eq!(m, m2);
+    }
+
+    // ===================================================================
+    // Additional: SS3 unknown
+    // ===================================================================
+
+    #[test]
+    fn ss3_unknown_final() {
+        let result = parse(b"\x1bOA");
+        assert_eq!(result, Err(ParseError::NotEscapeSequence));
+    }
 }
