@@ -2,6 +2,12 @@
 //!
 //! This crate exposes a C ABI that Bun loads via `bun:ffi` (see issue #2).
 
+pub mod buffer;
+pub mod cleanup;
+pub mod raw_mode;
+pub mod screen;
+pub mod signals;
+
 use std::ffi::c_char;
 
 /// Placeholder function demonstrating the C ABI pattern used by bun:ffi.

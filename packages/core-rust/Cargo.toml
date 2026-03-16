@@ -6,9 +6,11 @@ description = "Core Rust library for KittyUI terminal rendering"
 
 [lib]
 # Compile as a shared library (.so/.dylib/.dll) for use via bun:ffi with C ABI
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+libc = "0.2"
+signal-hook = "0.3"
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
