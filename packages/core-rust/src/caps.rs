@@ -92,7 +92,7 @@ pub trait TerminalQuerier {
 ///
 /// The terminal responds with `\x1b_Gi=31;OK\x1b\\` on success.
 #[must_use]
-pub fn parse_kitty_graphics_response(response: &[u8]) -> bool {
+fn parse_kitty_graphics_response(response: &[u8]) -> bool {
     contains_subsequence(response, b"\x1b_Gi=31;OK\x1b\\")
 }
 
@@ -100,7 +100,7 @@ pub fn parse_kitty_graphics_response(response: &[u8]) -> bool {
 ///
 /// The terminal responds with `\x1b[?{mode}u` where mode is a digit.
 #[must_use]
-pub fn parse_kitty_keyboard_response(response: &[u8]) -> bool {
+fn parse_kitty_keyboard_response(response: &[u8]) -> bool {
     // Look for \x1b[?<digits>u
     let mut i = 0;
     while i < response.len() {
@@ -127,7 +127,7 @@ pub fn parse_kitty_keyboard_response(response: &[u8]) -> bool {
 ///
 /// Looks for `\x1b[6;{height};{width}t` (response to mode 16t query).
 #[must_use]
-pub fn parse_cell_size_response(response: &[u8]) -> Option<(u16, u16)> {
+fn parse_cell_size_response(response: &[u8]) -> Option<(u16, u16)> {
     // Look for \x1b[6;<height>;<width>t
     let mut i = 0;
     while i < response.len() {
@@ -169,7 +169,7 @@ fn parse_cell_size_params(data: &[u8]) -> Option<(u16, u16)> {
 /// `\x1b[?1016;2$y` (mode reset — still means recognized).
 /// Ps=0 means not recognized (not supported).
 #[must_use]
-pub fn parse_pixel_mouse_response(response: &[u8]) -> bool {
+fn parse_pixel_mouse_response(response: &[u8]) -> bool {
     // Look for \x1b[?1016;{Ps}$y where Ps is 1 or 2
     contains_subsequence(response, b"\x1b[?1016;1$y")
         || contains_subsequence(response, b"\x1b[?1016;2$y")
@@ -184,7 +184,7 @@ pub fn parse_pixel_mouse_response(response: &[u8]) -> bool {
 /// Sends all probe queries followed by a DA1 fence, so we know when
 /// to stop reading responses.
 #[must_use]
-pub fn build_caps_query() -> Vec<u8> {
+fn build_caps_query() -> Vec<u8> {
     let mut query = Vec::new();
     query.extend_from_slice(KITTY_GRAPHICS_QUERY);
     query.extend_from_slice(KITTY_KEYBOARD_QUERY);
@@ -235,7 +235,7 @@ pub fn detect(querier: &mut dyn TerminalQuerier) -> io::Result<TerminalCaps> {
 
 /// Parse all capability responses from a combined response buffer.
 #[must_use]
-pub fn parse_all_responses(response: &[u8]) -> TerminalCaps {
+fn parse_all_responses(response: &[u8]) -> TerminalCaps {
     let cell_size = parse_cell_size_response(response);
 
     TerminalCaps {
