@@ -2,6 +2,7 @@
 //!
 //! This crate exposes a C ABI that Bun loads via `bun:ffi` (see issue #2).
 
+pub mod animation;
 pub mod ansi;
 pub mod buffer;
 pub mod caps;
