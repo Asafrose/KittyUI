@@ -19,7 +19,7 @@ const libPath = join(import.meta.dir, "..", "native", `libkittyui_core.${suffix}
 
 const symbols = {
   hello: { args: [], returns: FFIType.cstring },
-  init: { args: [], returns: FFIType.cstring },
+  init: { args: [], returns: FFIType.ptr },
   shutdown: { args: [], returns: FFIType.void },
   apply_mutations: { args: [FFIType.ptr, FFIType.u32], returns: FFIType.void },
   render_frame: { args: [], returns: FFIType.void },
@@ -32,8 +32,16 @@ const symbols = {
 } as const;
 
 // -----------------------------------------------------------------------
-// Layout result type
+// Result types
 // -----------------------------------------------------------------------
+
+/** Capabilities returned by the Rust `init()` call. */
+export interface InitResult {
+  versionMajor: number;
+  versionMinor: number;
+  versionPatch: number;
+  batchedFfi: boolean;
+}
 
 export interface NodeLayout {
   x: number;
@@ -58,8 +66,8 @@ export class Bridge {
     return existsSync(libPath);
   }
 
-  /** Initialise the Rust engine. Returns the capabilities JSON string. */
-  init(): string {
+  /** Initialise the Rust engine. Returns the capabilities struct. */
+  init(): InitResult {
     if (this.initialised) {
       throw new Error("Bridge already initialised");
     }
@@ -69,9 +77,18 @@ export class Bridge {
       );
     }
     this.lib = dlopen(libPath, symbols);
-    const capsPtr = this.lib.symbols.init();
+    const ptr = this.lib.symbols.init();
     this.initialised = true;
-    return String(capsPtr);
+    // InitResult is a #[repr(C)] struct: 3x u16 + 1x u8
+    const STRUCT_SIZE = 8;
+    const raw = Buffer.from(ptr as unknown as ArrayBuffer, 0, STRUCT_SIZE);
+    const view = new DataView(raw.buffer, raw.byteOffset, STRUCT_SIZE);
+    return {
+      batchedFfi: view.getUint8(6) !== 0,
+      versionMajor: view.getUint16(0, true),
+      versionMinor: view.getUint16(2, true),
+      versionPatch: view.getUint16(4, true),
+    };
   }
 
   /** Shut down the Rust engine and release resources. */

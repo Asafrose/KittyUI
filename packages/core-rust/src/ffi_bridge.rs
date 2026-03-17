@@ -5,7 +5,6 @@
 //! state (layout tree, text content, event queue, render loop).
 
 use std::collections::HashMap;
-use std::ffi::c_char;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
@@ -97,18 +96,39 @@ where
 // Lifecycle
 // ---------------------------------------------------------------------------
 
-/// Initialise the engine.  Returns a JSON capabilities string.
+/// Capabilities returned by `init()`.
+///
+/// Exposed as a `#[repr(C)]` struct so `bun:ffi` can read the fields
+/// directly without parsing a JSON string.
+#[repr(C)]
+pub struct InitResult {
+    /// Semver major version.
+    pub version_major: u16,
+    /// Semver minor version.
+    pub version_minor: u16,
+    /// Semver patch version.
+    pub version_patch: u16,
+    /// Non-zero if the batched FFI protocol is supported.
+    pub batched_ffi: u8,
+}
+
+/// Initialise the engine.  Returns a capabilities struct.
 ///
 /// # Safety
 ///
 /// Must be called exactly once before any other FFI function.
 #[no_mangle]
-pub extern "C" fn init() -> *const c_char {
+pub extern "C" fn init() -> InitResult {
     let mut guard = ENGINE
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     *guard = Some(EngineState::new());
-    c"{\"version\":\"0.1.0\",\"batched_ffi\":true}".as_ptr()
+    InitResult {
+        version_major: 0,
+        version_minor: 1,
+        version_patch: 0,
+        batched_ffi: 1,
+    }
 }
 
 /// Shut down the engine and release all resources.
@@ -274,109 +294,121 @@ fn json_extract_str<'a>(s: &'a str, key: &str) -> Option<&'a str> {
 }
 
 /// Process a single mutation op from the reader, returning `true` to continue.
-#[allow(clippy::too_many_lines)]
 fn process_mutation(reader: &mut MutationReader<'_>, state: &mut EngineState) -> bool {
     let Some(op) = reader.read_u8() else {
         return false;
     };
-    match op {
-        OP_CREATE_NODE => {
-            let Some(node_id) = reader.read_u32() else {
-                return false;
-            };
-            let Some(json_len) = reader.read_u16() else {
-                return false;
-            };
-            let Some(json_bytes) = reader.read_bytes(json_len as usize) else {
-                return false;
-            };
-            let style = parse_style_json(json_bytes);
-            if let Ok(layout_id) = state.layout.add_leaf(&style) {
-                state.node_map.insert(node_id, layout_id);
-                if state.root_node.is_none() {
-                    state.root_node = Some(node_id);
-                }
-            }
-            state.dirty = true;
+    let ok = match op {
+        OP_CREATE_NODE => mut_create_node(reader, state),
+        OP_REMOVE_NODE => mut_remove_node(reader, state),
+        OP_APPEND_CHILD => mut_append_child(reader, state),
+        OP_INSERT_BEFORE => mut_insert_before(reader, state),
+        OP_SET_STYLE => mut_set_style(reader, state),
+        OP_SET_TEXT => mut_set_text(reader, state),
+        _ => false,
+    };
+    if ok {
+        state.dirty = true;
+    }
+    ok
+}
+
+fn mut_create_node(reader: &mut MutationReader<'_>, state: &mut EngineState) -> bool {
+    let Some(node_id) = reader.read_u32() else {
+        return false;
+    };
+    let Some(json_len) = reader.read_u16() else {
+        return false;
+    };
+    let Some(json_bytes) = reader.read_bytes(json_len as usize) else {
+        return false;
+    };
+    let style = parse_style_json(json_bytes);
+    if let Ok(layout_id) = state.layout.add_leaf(&style) {
+        state.node_map.insert(node_id, layout_id);
+        if state.root_node.is_none() {
+            state.root_node = Some(node_id);
         }
-        OP_REMOVE_NODE => {
-            let Some(node_id) = reader.read_u32() else {
-                return false;
-            };
-            if let Some(layout_id) = state.node_map.remove(&node_id) {
-                let _ = state.layout.remove(layout_id);
-            }
-            state.text_content.remove(&node_id);
-            state.dirty = true;
-        }
-        OP_APPEND_CHILD => {
-            let Some(parent_id) = reader.read_u32() else {
-                return false;
-            };
-            let Some(child_id) = reader.read_u32() else {
-                return false;
-            };
-            if let (Some(&p), Some(&c)) = (
-                state.node_map.get(&parent_id),
-                state.node_map.get(&child_id),
-            ) {
-                let _ = state.layout.add_child(p, c);
-            }
-            state.dirty = true;
-        }
-        OP_INSERT_BEFORE => {
-            let Some(parent_id) = reader.read_u32() else {
-                return false;
-            };
-            let Some(child_id) = reader.read_u32() else {
-                return false;
-            };
-            let Some(_before_id) = reader.read_u32() else {
-                return false;
-            };
-            // Taffy doesn't have insert_before — append for now.
-            if let (Some(&p), Some(&c)) = (
-                state.node_map.get(&parent_id),
-                state.node_map.get(&child_id),
-            ) {
-                let _ = state.layout.add_child(p, c);
-            }
-            state.dirty = true;
-        }
-        OP_SET_STYLE => {
-            let Some(node_id) = reader.read_u32() else {
-                return false;
-            };
-            let Some(json_len) = reader.read_u16() else {
-                return false;
-            };
-            let Some(json_bytes) = reader.read_bytes(json_len as usize) else {
-                return false;
-            };
-            let style = parse_style_json(json_bytes);
-            if let Some(&layout_id) = state.node_map.get(&node_id) {
-                let _ = state.layout.set_style(layout_id, &style);
-            }
-            state.dirty = true;
-        }
-        OP_SET_TEXT => {
-            let Some(node_id) = reader.read_u32() else {
-                return false;
-            };
-            let Some(text_len) = reader.read_u16() else {
-                return false;
-            };
-            let Some(text_bytes) = reader.read_bytes(text_len as usize) else {
-                return false;
-            };
-            if let Ok(text) = std::str::from_utf8(text_bytes) {
-                state.text_content.insert(node_id, text.to_owned());
-            }
-            state.dirty = true;
-        }
-        _ => {
-            return false;
-        }
+    }
+    true
+}
+
+fn mut_remove_node(reader: &mut MutationReader<'_>, state: &mut EngineState) -> bool {
+    let Some(node_id) = reader.read_u32() else {
+        return false;
+    };
+    if let Some(layout_id) = state.node_map.remove(&node_id) {
+        let _ = state.layout.remove(layout_id);
+    }
+    state.text_content.remove(&node_id);
+    true
+}
+
+fn mut_append_child(reader: &mut MutationReader<'_>, state: &mut EngineState) -> bool {
+    let Some(parent_id) = reader.read_u32() else {
+        return false;
+    };
+    let Some(child_id) = reader.read_u32() else {
+        return false;
+    };
+    if let (Some(&p), Some(&c)) = (
+        state.node_map.get(&parent_id),
+        state.node_map.get(&child_id),
+    ) {
+        let _ = state.layout.add_child(p, c);
+    }
+    true
+}
+
+fn mut_insert_before(reader: &mut MutationReader<'_>, state: &mut EngineState) -> bool {
+    let Some(parent_id) = reader.read_u32() else {
+        return false;
+    };
+    let Some(child_id) = reader.read_u32() else {
+        return false;
+    };
+    let Some(_before_id) = reader.read_u32() else {
+        return false;
+    };
+    // Taffy doesn't have insert_before — append for now.
+    if let (Some(&p), Some(&c)) = (
+        state.node_map.get(&parent_id),
+        state.node_map.get(&child_id),
+    ) {
+        let _ = state.layout.add_child(p, c);
+    }
+    true
+}
+
+fn mut_set_style(reader: &mut MutationReader<'_>, state: &mut EngineState) -> bool {
+    let Some(node_id) = reader.read_u32() else {
+        return false;
+    };
+    let Some(json_len) = reader.read_u16() else {
+        return false;
+    };
+    let Some(json_bytes) = reader.read_bytes(json_len as usize) else {
+        return false;
+    };
+    let style = parse_style_json(json_bytes);
+    if let Some(&layout_id) = state.node_map.get(&node_id) {
+        let _ = state.layout.set_style(layout_id, &style);
+    }
+    true
+}
+
+fn mut_set_text(reader: &mut MutationReader<'_>, state: &mut EngineState) -> bool {
+    let Some(node_id) = reader.read_u32() else {
+        return false;
+    };
+    let Some(text_len) = reader.read_u16() else {
+        return false;
+    };
+    let Some(text_bytes) = reader.read_bytes(text_len as usize) else {
+        return false;
+    };
+    if let Ok(text) = std::str::from_utf8(text_bytes) {
+        state.text_content.insert(node_id, text.to_owned());
     }
     true
 }
@@ -677,11 +709,12 @@ mod tests {
 
     #[test]
     #[serial]
-    fn init_returns_capabilities_json() {
-        let ptr = init();
-        let cstr = unsafe { std::ffi::CStr::from_ptr(ptr) };
-        let s = cstr.to_str().unwrap();
-        assert!(s.contains("\"batched_ffi\":true"));
+    fn init_returns_capabilities_struct() {
+        let caps = init();
+        assert_eq!(caps.version_major, 0);
+        assert_eq!(caps.version_minor, 1);
+        assert_eq!(caps.version_patch, 0);
+        assert_eq!(caps.batched_ffi, 1);
         teardown();
     }
 
