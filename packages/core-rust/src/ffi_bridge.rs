@@ -112,22 +112,27 @@ pub struct InitResult {
     pub batched_ffi: u8,
 }
 
-/// Initialise the engine.  Returns a capabilities struct.
+/// Initialise the engine.  Writes capabilities into `out_ptr`.
 ///
 /// # Safety
 ///
-/// Must be called exactly once before any other FFI function.
+/// - Must be called exactly once before any other FFI function.
+/// - `out_ptr` must point to a writable `InitResult`.
 #[no_mangle]
-pub extern "C" fn init() -> InitResult {
+pub unsafe extern "C" fn init(out_ptr: *mut InitResult) {
     let mut guard = ENGINE
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     *guard = Some(EngineState::new());
-    InitResult {
-        version_major: 0,
-        version_minor: 1,
-        version_patch: 0,
-        batched_ffi: 1,
+    if !out_ptr.is_null() {
+        unsafe {
+            out_ptr.write(InitResult {
+                version_major: 0,
+                version_minor: 1,
+                version_patch: 0,
+                batched_ffi: 1,
+            });
+        }
     }
 }
 
@@ -700,7 +705,7 @@ mod tests {
     }
 
     fn setup() {
-        init();
+        unsafe { init(std::ptr::null_mut()) };
     }
 
     fn teardown() {
@@ -709,8 +714,14 @@ mod tests {
 
     #[test]
     #[serial]
-    fn init_returns_capabilities_struct() {
-        let caps = init();
+    fn init_writes_capabilities_to_out_ptr() {
+        let mut caps = InitResult {
+            version_major: 0,
+            version_minor: 0,
+            version_patch: 0,
+            batched_ffi: 0,
+        };
+        unsafe { init(&mut caps) };
         assert_eq!(caps.version_major, 0);
         assert_eq!(caps.version_minor, 1);
         assert_eq!(caps.version_patch, 0);

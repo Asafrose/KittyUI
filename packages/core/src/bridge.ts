@@ -3,7 +3,7 @@
  * between the TypeScript reconciler and the Rust core engine.
  */
 
-import { FFIType, dlopen, suffix } from "bun:ffi";
+import { FFIType, dlopen, ptr, suffix } from "bun:ffi";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -19,7 +19,7 @@ const libPath = join(import.meta.dir, "..", "native", `libkittyui_core.${suffix}
 
 const symbols = {
   hello: { args: [], returns: FFIType.cstring },
-  init: { args: [], returns: FFIType.ptr },
+  init: { args: [FFIType.ptr], returns: FFIType.void },
   shutdown: { args: [], returns: FFIType.void },
   apply_mutations: { args: [FFIType.ptr, FFIType.u32], returns: FFIType.void },
   render_frame: { args: [], returns: FFIType.void },
@@ -77,12 +77,12 @@ export class Bridge {
       );
     }
     this.lib = dlopen(libPath, symbols);
-    const ptr = this.lib.symbols.init();
-    this.initialised = true;
-    // InitResult is a #[repr(C)] struct: 3x u16 + 1x u8
+    // InitResult is #[repr(C)]: 3x u16 + 1x u8 = 7 bytes, padded to 8
     const STRUCT_SIZE = 8;
-    const raw = Buffer.from(ptr as unknown as ArrayBuffer, 0, STRUCT_SIZE);
-    const view = new DataView(raw.buffer, raw.byteOffset, STRUCT_SIZE);
+    const buf = new Uint8Array(STRUCT_SIZE);
+    this.lib.symbols.init(ptr(buf));
+    this.initialised = true;
+    const view = new DataView(buf.buffer, buf.byteOffset, STRUCT_SIZE);
     return {
       batchedFfi: view.getUint8(6) !== 0,
       versionMajor: view.getUint16(0, true),
