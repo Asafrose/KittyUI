@@ -11,6 +11,7 @@ pub mod ffi_bridge;
 pub mod focus;
 pub mod hit_test;
 pub mod image;
+pub mod image_placement;
 pub mod keyboard;
 pub mod layout;
 pub mod mock_terminal;
