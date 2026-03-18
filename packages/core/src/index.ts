@@ -75,6 +75,20 @@ export { Renderable, resetNodeIdCounter } from "./renderable.js";
 // RenderableTree
 export { RenderableTree } from "./renderable-tree.js";
 
+// BoxRenderable
+export { BoxRenderable, resolveBorderChars } from "./box.js";
+export type {
+  BackgroundCell,
+  BorderCell,
+  BorderChars,
+  BorderPreset,
+  BoxShadow,
+  BoxStyle,
+  Overflow,
+  ResolvedBoxShadow,
+  ShadowCell,
+} from "./box.js";
+
 // TextRenderable
 export {
   TextRenderable,
