@@ -4,6 +4,8 @@ node_modules/
 # Build outputs
 dist/
 .turbo/
+tsconfig.tsbuildinfo
+*.tsbuildinfo
 
 # Rust
 target/
