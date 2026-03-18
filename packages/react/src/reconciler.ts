@@ -47,6 +47,7 @@ export interface KittyRoot {
  */
 export const createRoot = (tree: RenderableTree): KittyRoot => {
   const rootRenderable = new BoxRenderable();
+  rootRenderable.tree = tree;
   tree.setRoot(rootRenderable);
 
   const container: Container = { root: rootRenderable, tree };

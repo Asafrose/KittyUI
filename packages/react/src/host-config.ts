@@ -4,7 +4,7 @@
  * Maps React's tree operations to mutations on a RenderableTree.
  */
 
-import { type BoxRenderable, type KittyProps, type TextRenderable, createRenderableForType } from "./renderables.js";
+import { type BoxRenderable, type KittyProps, type TextRenderable, createRenderableForType, flushPendingChildren } from "./renderables.js";
 import type { RenderableTree } from "@kittyui/core";
 
 // ---------------------------------------------------------------------------
@@ -63,17 +63,17 @@ export const hostConfig = {
   afterActiveInstanceBlur(): void {},
 
   appendChild(parentInstance: Instance, child: Instance | TextInstance): void {
-    void parentInstance;
-    void child;
+    if (parentInstance.tree) {
+      flushPendingChildren(parentInstance.tree, parentInstance.nodeId, child);
+    }
   },
 
   appendChildToContainer(container: Container, child: Instance | TextInstance): void {
-    container.tree.appendChild(container.root.nodeId, child);
+    flushPendingChildren(container.tree, container.root.nodeId, child);
   },
 
   appendInitialChild(parentInstance: Instance, child: Instance | TextInstance): void {
-    void parentInstance;
-    void child;
+    parentInstance.pendingChildren.push(child);
   },
 
   beforeActiveInstanceBlur(): void {},
@@ -96,14 +96,16 @@ export const hostConfig = {
     applyCommitUpdate({ instance, nextProps });
   },
 
-  createInstance(type: Type, props: Props, _rootContainer: Container): Instance {
+  createInstance(type: Type, props: Props, rootContainer: Container): Instance {
     const instance = createRenderableForType(type);
+    instance.tree = rootContainer.tree;
     instance.applyProps(props);
     return instance;
   },
 
-  createTextInstance(text: string, _rootContainer: Container): TextInstance {
+  createTextInstance(text: string, rootContainer: Container): TextInstance {
     const instance = createRenderableForType("text") as TextRenderable;
+    instance.tree = rootContainer.tree;
     instance.setText(text);
     return instance;
   },
@@ -149,9 +151,11 @@ export const hostConfig = {
     void textInstance;
   },
 
-  insertBefore(parentInstance: Instance, child: Instance | TextInstance, _beforeChild: Instance | TextInstance): void {
-    void parentInstance;
-    void child;
+  insertBefore(parentInstance: Instance, child: Instance | TextInstance, beforeChild: Instance | TextInstance): void {
+    if (parentInstance.tree) {
+      child.tree = parentInstance.tree;
+      parentInstance.tree.insertBefore(parentInstance.nodeId, child, beforeChild.nodeId);
+    }
   },
 
   insertInContainerBefore(
@@ -159,6 +163,7 @@ export const hostConfig = {
     child: Instance | TextInstance,
     beforeChild: Instance | TextInstance,
   ): void {
+    child.tree = container.tree;
     container.tree.insertBefore(container.root.nodeId, child, beforeChild.nodeId);
   },
 
@@ -186,9 +191,10 @@ export const hostConfig = {
 
   prepareScopeUpdate(): void {},
 
-  removeChild(parentInstance: Instance, child: Instance | TextInstance): void {
-    void parentInstance;
-    void child;
+  removeChild(_parentInstance: Instance, child: Instance | TextInstance): void {
+    if (child.tree) {
+      child.tree.remove(child.nodeId);
+    }
   },
 
   removeChildFromContainer(container: Container, child: Instance | TextInstance): void {

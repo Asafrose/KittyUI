@@ -10,6 +10,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@kittyui/core": "workspace:*"
+    "@kittyui/core": "workspace:*",
+    "@kittyui/react": "workspace:*",
+    "react": "^19.2.4"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14"
   }
 }

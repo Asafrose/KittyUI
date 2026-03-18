@@ -2,7 +2,7 @@
  * Concrete Renderable subclasses for each JSX element type.
  */
 
-import { type CSSStyle, Renderable } from "@kittyui/core";
+import { type CSSStyle, type RenderableTree, Renderable } from "@kittyui/core";
 
 /** Props shared by all KittyUI JSX elements. */
 export interface KittyProps {
@@ -10,9 +10,29 @@ export interface KittyProps {
   style?: CSSStyle;
 }
 
+/**
+ * Flush an instance and all its pending children into the tree recursively.
+ * Called when an instance is first attached to the tree (via appendChild or
+ * appendChildToContainer).
+ */
+export const flushPendingChildren = (
+  tree: RenderableTree,
+  parentId: number,
+  instance: BoxRenderable | TextRenderable,
+): void => {
+  tree.appendChild(parentId, instance);
+  instance.tree = tree;
+  for (const child of instance.pendingChildren) {
+    flushPendingChildren(tree, instance.nodeId, child);
+  }
+  instance.pendingChildren = [];
+};
+
 /** A box container element (like a div). */
 export class BoxRenderable extends Renderable {
   readonly type = "box";
+  tree: RenderableTree | undefined;
+  pendingChildren: (BoxRenderable | TextRenderable)[] = [];
 
   applyProps(props: KittyProps): void {
     if (props.style) {
@@ -24,6 +44,8 @@ export class BoxRenderable extends Renderable {
 /** A text element that renders a string. */
 export class TextRenderable extends Renderable {
   readonly type = "text";
+  tree: RenderableTree | undefined;
+  pendingChildren: (BoxRenderable | TextRenderable)[] = [];
 
   applyProps(props: KittyProps): void {
     if (props.style) {
