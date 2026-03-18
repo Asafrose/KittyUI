@@ -1,0 +1,20 @@
+{
+  "name": "kittyui-demo",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Demo app showcasing KittyUI capabilities",
+  "type": "module",
+  "main": "src/main.ts",
+  "scripts": {
+    "start": "bun run src/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@kittyui/core": "workspace:*",
+    "@kittyui/react": "workspace:*",
+    "react": "^19.2.4"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14"
+  }
+}
