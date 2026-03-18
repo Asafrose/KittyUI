@@ -1,11 +1,13 @@
 /**
  * Simple TS-side ANSI renderer for the KittyUI demo.
  *
- * Reads computed layouts from the Bridge and writes colored boxes/text
- * to stdout using raw ANSI escape sequences.
+ * Reads computed layouts from either the Bridge (native) or the pure-TS
+ * layout engine, and writes colored boxes/text to stdout using raw ANSI
+ * escape sequences.
  */
 
 import type { Bridge, Color, ComputedLayout, Renderable, RenderableTree } from "@kittyui/core";
+import { computeLayouts } from "./layout.js";
 
 // ---------------------------------------------------------------------------
 // ANSI helpers
@@ -60,12 +62,12 @@ const colorToAnsiBg = (color: Color): string => {
 // ---------------------------------------------------------------------------
 
 export interface RendererOptions {
-  bridge: Bridge;
+  bridge?: Bridge;
   tree: RenderableTree;
 }
 
 export class DemoRenderer {
-  private bridge: Bridge;
+  private bridge: Bridge | undefined;
   private tree: RenderableTree;
   private cols: number;
   private rows: number;
@@ -93,15 +95,19 @@ export class DemoRenderer {
 
   /** Run one render frame: compute layout, then paint. */
   renderFrame(): void {
-    // Flush any pending style changes
-    this.tree.flushDirtyStyles();
-    this.bridge.flushMutations();
+    let layouts: Map<number, ComputedLayout>;
 
-    // Compute layout on the Rust side
-    this.bridge.renderFrame();
+    if (this.bridge) {
+      // Native path: flush to Rust, compute, retrieve
+      this.tree.flushDirtyStyles();
+      this.bridge.flushMutations();
+      this.bridge.renderFrame();
+      layouts = this.bridge.getAllLayouts();
+    } else {
+      // Pure-TS path: compute layouts locally
+      layouts = computeLayouts(this.tree, this.cols, this.rows);
+    }
 
-    // Get all computed layouts
-    const layouts = this.bridge.getAllLayouts();
     this.tree.applyLayouts(layouts);
 
     // Paint
@@ -155,7 +161,9 @@ export class DemoRenderer {
     color: Color,
   ): string {
     let buf = colorToAnsiBg(color);
-    const fill = " ".repeat(Math.max(0, Math.floor(width)));
+    const w = Math.min(Math.floor(width), this.cols - Math.floor(x));
+    if (w <= 0) return "";
+    const fill = " ".repeat(w);
     for (let row = 0; row < Math.floor(height); row++) {
       const screenRow = y + row;
       if (screenRow < 0 || screenRow >= this.rows) continue;
@@ -188,7 +196,7 @@ export class DemoRenderer {
     if (style.underline) buf += `${ESC}4m`;
 
     // Render text lines, wrapping to fit layout width
-    const maxWidth = Math.floor(layout.width);
+    const maxWidth = Math.max(1, Math.floor(layout.width));
     const lines = this.wrapText(text, maxWidth);
 
     for (let i = 0; i < lines.length && i < Math.floor(layout.height); i++) {
