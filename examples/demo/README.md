@@ -29,9 +29,9 @@ cd examples/demo
 bun run start
 ```
 
-Without the native library, the demo runs in "tree-only" mode — the React
-component tree is mounted and you can verify the node count, but nothing is
-rendered to the terminal.
+Without the native library, the demo runs in "tree-only" mode — the layout
+tree is built and you can verify the node count, but nothing is rendered to
+the terminal.
 
 ## Type-checking
 
