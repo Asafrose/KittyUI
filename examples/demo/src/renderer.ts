@@ -1,12 +1,11 @@
 /**
  * Simple TS-side ANSI renderer for the KittyUI demo.
  *
- * Reads computed layouts from either the Bridge (native) or the pure-TS
- * layout engine, and writes colored boxes/text to stdout using raw ANSI
- * escape sequences.
+ * Computes layouts using a pure-TS flexbox engine and writes colored
+ * boxes/text to stdout using raw ANSI escape sequences.
  */
 
-import type { Bridge, Color, ComputedLayout, Renderable, RenderableTree } from "@kittyui/core";
+import type { Color, ComputedLayout, Renderable, RenderableTree, TextStyle } from "@kittyui/core";
 import { computeLayouts } from "./layout.js";
 
 // ---------------------------------------------------------------------------
@@ -58,6 +57,20 @@ const colorToAnsiBg = (color: Color): string => {
 };
 
 // ---------------------------------------------------------------------------
+// Style inheritance
+// ---------------------------------------------------------------------------
+
+/** Merge parent text style with child — child values win when present. */
+const inheritTextStyle = (parent: TextStyle, child: TextStyle): TextStyle => ({
+  fg: child.fg ?? parent.fg,
+  bg: child.bg ?? parent.bg,
+  bold: child.bold ?? parent.bold,
+  dim: child.dim ?? parent.dim,
+  italic: child.italic ?? parent.italic,
+  underline: child.underline ?? parent.underline,
+});
+
+// ---------------------------------------------------------------------------
 // Renderer
 // ---------------------------------------------------------------------------
 
@@ -71,20 +84,17 @@ const colorName = (color: Color): string => {
 };
 
 export interface RendererOptions {
-  bridge?: Bridge;
   tree: RenderableTree;
   debug?: boolean;
 }
 
 export class DemoRenderer {
-  private bridge: Bridge | undefined;
   private tree: RenderableTree;
   private debug: boolean;
   private cols: number;
   private rows: number;
 
   constructor(opts: RendererOptions) {
-    this.bridge = opts.bridge;
     this.tree = opts.tree;
     this.debug = opts.debug ?? false;
     this.cols = process.stdout.columns || 80;
@@ -98,7 +108,6 @@ export class DemoRenderer {
     }
     if (this.debug) {
       this.log(`Terminal dimensions: ${this.cols}x${this.rows}`);
-      this.log(`Layout engine: ${this.bridge ? "native (Rust)" : "pure-TS"}`);
       this.log(`Tree size: ${this.tree.size} nodes`);
     }
     process.on("resize", () => {
@@ -124,19 +133,7 @@ export class DemoRenderer {
 
   /** Run one render frame: compute layout, then paint. */
   renderFrame(): void {
-    let layouts: Map<number, ComputedLayout>;
-
-    if (this.bridge) {
-      // Native path: flush to Rust, compute, retrieve
-      this.tree.flushDirtyStyles();
-      this.bridge.flushMutations();
-      this.bridge.renderFrame();
-      layouts = this.bridge.getAllLayouts();
-    } else {
-      // Pure-TS path: compute layouts locally
-      layouts = computeLayouts(this.tree, this.cols, this.rows);
-    }
-
+    const layouts = computeLayouts(this.tree, this.cols, this.rows);
     this.tree.applyLayouts(layouts);
 
     if (this.debug) {
@@ -148,7 +145,7 @@ export class DemoRenderer {
     let buf = this.debug ? "" : clearScreen;
     const rootId = this.tree.root;
     if (rootId !== undefined) {
-      buf += this.paintNode(rootId, 0, 0);
+      buf += this.paintNode(rootId, 0, 0, {});
     }
     buf += resetStyle;
     if (!this.debug) {
@@ -168,7 +165,12 @@ export class DemoRenderer {
     }
   }
 
-  private paintNode(nodeId: number, offsetX: number, offsetY: number): string {
+  private paintNode(
+    nodeId: number,
+    offsetX: number,
+    offsetY: number,
+    parentStyle: TextStyle,
+  ): string {
     const renderable = this.tree.get(nodeId);
     if (!renderable) return "";
 
@@ -178,10 +180,13 @@ export class DemoRenderer {
     const absX = offsetX + layout.x;
     const absY = offsetY + layout.y;
 
+    // Merge this node's text style with inherited parent style
+    const effectiveStyle = inheritTextStyle(parentStyle, renderable.textStyle);
+
     let buf = "";
 
     // Paint background
-    const bgColor = renderable.textStyle.bg;
+    const bgColor = effectiveStyle.bg;
     if (bgColor) {
       if (this.debug) {
         this.log(
@@ -194,19 +199,18 @@ export class DemoRenderer {
     // Paint text content
     const text = renderable.text;
     if (text) {
-      const fgColor = renderable.textStyle.fg;
       if (this.debug) {
         this.log(
-          `  draw text node=${nodeId} pos=(${absX},${absY}) size=${layout.width}x${layout.height} fg=${fgColor ? colorName(fgColor) : "default"} text="${text.slice(0, 40)}${text.length > 40 ? "..." : ""}"`,
+          `  draw text node=${nodeId} pos=(${absX},${absY}) size=${layout.width}x${layout.height} fg=${effectiveStyle.fg ? colorName(effectiveStyle.fg) : "default"} text="${text.slice(0, 40)}${text.length > 40 ? "..." : ""}"`,
         );
       }
-      buf += this.paintText(absX, absY, layout, renderable);
+      buf += this.paintText(absX, absY, layout, text, effectiveStyle);
     }
 
-    // Paint children
+    // Paint children — pass effective style for inheritance
     const children = this.tree.children(nodeId);
     for (const child of children) {
-      buf += this.paintNode(child.nodeId, absX, absY);
+      buf += this.paintNode(child.nodeId, absX, absY, effectiveStyle);
     }
 
     return buf;
@@ -238,12 +242,9 @@ export class DemoRenderer {
     x: number,
     y: number,
     layout: ComputedLayout,
-    renderable: Renderable,
+    text: string,
+    style: TextStyle,
   ): string {
-    const text = renderable.text;
-    if (!text) return "";
-
-    const style = renderable.textStyle;
     let buf = "";
 
     // Apply text style
@@ -254,11 +255,12 @@ export class DemoRenderer {
     if (style.italic) buf += `${ESC}3m`;
     if (style.underline) buf += `${ESC}4m`;
 
-    // Render text lines, wrapping to fit layout width
-    const maxWidth = Math.max(1, Math.floor(layout.width));
+    // Use parent width if this node has 0 width (text instances inherit parent box)
+    const maxWidth = Math.max(1, Math.floor(layout.width) || this.cols);
     const lines = this.wrapText(text, maxWidth);
 
-    for (let i = 0; i < lines.length && i < Math.floor(layout.height); i++) {
+    const maxHeight = Math.max(1, Math.floor(layout.height));
+    for (let i = 0; i < lines.length && i < maxHeight; i++) {
       const screenRow = y + i;
       if (screenRow < 0 || screenRow >= this.rows) continue;
       const screenCol = Math.max(0, Math.floor(x));
@@ -274,12 +276,10 @@ export class DemoRenderer {
   private wrapText(text: string, maxWidth: number): string[] {
     if (maxWidth <= 0) return [];
     const lines: string[] = [];
-    // Split on newlines first
     for (const segment of text.split("\n")) {
       if (segment.length <= maxWidth) {
         lines.push(segment);
       } else {
-        // Word-wrap
         let pos = 0;
         while (pos < segment.length) {
           lines.push(segment.slice(pos, pos + maxWidth));
