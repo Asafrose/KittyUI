@@ -8,54 +8,68 @@
 import type { Color } from "./types.js";
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const HEX_SHORT_LEN = 3;
+const HEX_LONG_LEN = 6;
+const HEX_RADIX = 16;
+const DECIMAL_RADIX = 10;
+const RGB_COMPONENT_COUNT = 3;
+const RGB_PREFIX_LEN = 4;
+const ANSI_PREFIX_LEN = 5;
+const ANSI_STANDARD_PREFIX_LEN = 14;
+const ANSI_BRIGHT_PREFIX_LEN = 12;
+const MAX_COLOR_VALUE = 255;
+const MAX_ANSI_STANDARD = 7;
+
+// ---------------------------------------------------------------------------
 // Named CSS colors (W3C basic + extended subset commonly used in terminals)
 // ---------------------------------------------------------------------------
 
+/* eslint-disable no-magic-numbers */
 const NAMED_COLORS: Record<string, [number, number, number]> = {
+  "ansi-black": [0, 0, 0],
+  "ansi-blue": [0, 0, 170],
+  "ansi-bright-black": [85, 85, 85],
+  "ansi-bright-blue": [85, 85, 255],
+  "ansi-bright-cyan": [85, 255, 255],
+  "ansi-bright-green": [85, 255, 85],
+  "ansi-bright-magenta": [255, 85, 255],
+  "ansi-bright-red": [255, 85, 85],
+  "ansi-bright-white": [255, 255, 255],
+  "ansi-bright-yellow": [255, 255, 85],
+  "ansi-cyan": [0, 170, 170],
+  "ansi-green": [0, 170, 0],
+  "ansi-magenta": [170, 0, 170],
+  "ansi-red": [170, 0, 0],
+  "ansi-white": [170, 170, 170],
+  "ansi-yellow": [170, 85, 0],
+  aqua: [0, 255, 255],
   black: [0, 0, 0],
-  red: [255, 0, 0],
-  green: [0, 128, 0],
   blue: [0, 0, 255],
-  white: [255, 255, 255],
-  yellow: [255, 255, 0],
-  cyan: [0, 255, 255],
-  magenta: [255, 0, 255],
-  orange: [255, 165, 0],
-  purple: [128, 0, 128],
-  pink: [255, 192, 203],
   brown: [165, 42, 42],
+  cyan: [0, 255, 255],
+  fuchsia: [255, 0, 255],
   gray: [128, 128, 128],
+  green: [0, 128, 0],
   grey: [128, 128, 128],
   lime: [0, 255, 0],
-  navy: [0, 0, 128],
-  teal: [0, 128, 128],
-  olive: [128, 128, 0],
+  magenta: [255, 0, 255],
   maroon: [128, 0, 0],
-  aqua: [0, 255, 255],
-  fuchsia: [255, 0, 255],
+  navy: [0, 0, 128],
+  olive: [128, 128, 0],
+  orange: [255, 165, 0],
+  pink: [255, 192, 203],
+  purple: [128, 0, 128],
+  red: [255, 0, 0],
   silver: [192, 192, 192],
+  teal: [0, 128, 128],
   transparent: [0, 0, 0],
-
-  // ANSI named colors (mapped to standard palette)
-  "ansi-black": [0, 0, 0],
-  "ansi-red": [170, 0, 0],
-  "ansi-green": [0, 170, 0],
-  "ansi-yellow": [170, 85, 0],
-  "ansi-blue": [0, 0, 170],
-  "ansi-magenta": [170, 0, 170],
-  "ansi-cyan": [0, 170, 170],
-  "ansi-white": [170, 170, 170],
-
-  // Bright ANSI
-  "ansi-bright-black": [85, 85, 85],
-  "ansi-bright-red": [255, 85, 85],
-  "ansi-bright-green": [85, 255, 85],
-  "ansi-bright-yellow": [255, 255, 85],
-  "ansi-bright-blue": [85, 85, 255],
-  "ansi-bright-magenta": [255, 85, 255],
-  "ansi-bright-cyan": [85, 255, 255],
-  "ansi-bright-white": [255, 255, 255],
+  white: [255, 255, 255],
+  yellow: [255, 255, 0],
 };
+/* eslint-enable no-magic-numbers */
 
 // ---------------------------------------------------------------------------
 // Parsing
@@ -74,91 +88,101 @@ const NAMED_COLORS: Record<string, [number, number, number]> = {
  *
  * Returns `undefined` if the string cannot be parsed.
  */
-export function parseColor(input: string): Color | undefined {
-  const s = input.trim().toLowerCase();
+export const parseColor = (input: string): Color | undefined => {
+  const str = input.trim().toLowerCase();
 
-  // Hex: #rgb or #rrggbb
-  if (s.startsWith("#")) {
-    return parseHex(s);
+  if (str.startsWith("#")) {
+    return parseHex(str);
   }
 
-  // rgb(r, g, b)
-  if (s.startsWith("rgb(") && s.endsWith(")")) {
-    return parseRgbFunc(s);
+  if (str.startsWith("rgb(") && str.endsWith(")")) {
+    return parseRgbFunc(str);
   }
 
-  // ansi(n) — 256-color palette
-  if (s.startsWith("ansi(") && s.endsWith(")")) {
-    return parseAnsiFunc(s);
+  if (str.startsWith("ansi(") && str.endsWith(")")) {
+    return parseAnsiFunc(str);
   }
 
-  // ansi-standard(n)
-  if (s.startsWith("ansi-standard(") && s.endsWith(")")) {
-    return parseAnsiStandardFunc(s);
+  if (str.startsWith("ansi-standard(") && str.endsWith(")")) {
+    return parseAnsiStandardFunc(str);
   }
 
-  // ansi-bright(n)
-  if (s.startsWith("ansi-bright(") && s.endsWith(")")) {
-    return parseAnsiBrightFunc(s);
+  if (str.startsWith("ansi-bright(") && str.endsWith(")")) {
+    return parseAnsiBrightFunc(str);
   }
 
-  // Named color
-  const named = NAMED_COLORS[s];
+  const named = NAMED_COLORS[str];
   if (named) {
-    return { type: "rgb", r: named[0], g: named[1], b: named[2] };
+    return { b: named[2], g: named[1], r: named[0], type: "rgb" };
   }
 
   return undefined;
-}
+};
 
-function parseHex(s: string): Color | undefined {
-  const hex = s.slice(1);
-  if (hex.length === 3) {
-    const r = Number.parseInt(hex[0] + hex[0], 16);
-    const g = Number.parseInt(hex[1] + hex[1], 16);
-    const b = Number.parseInt(hex[2] + hex[2], 16);
-    if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) return undefined;
-    return { type: "rgb", r, g, b };
+const parseHex = (str: string): Color | undefined => {
+  const hex = str.slice(1);
+  if (hex.length === HEX_SHORT_LEN) {
+    const rr = Number.parseInt(hex[0] + hex[0], HEX_RADIX);
+    const gg = Number.parseInt(hex[1] + hex[1], HEX_RADIX);
+    const bb = Number.parseInt(hex[2] + hex[2], HEX_RADIX);
+    if (Number.isNaN(rr) || Number.isNaN(gg) || Number.isNaN(bb)) {
+      return undefined;
+    }
+    return { b: bb, g: gg, r: rr, type: "rgb" };
   }
-  if (hex.length === 6) {
-    const r = Number.parseInt(hex.slice(0, 2), 16);
-    const g = Number.parseInt(hex.slice(2, 4), 16);
-    const b = Number.parseInt(hex.slice(4, 6), 16);
-    if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) return undefined;
-    return { type: "rgb", r, g, b };
+  if (hex.length === HEX_LONG_LEN) {
+    const rr = Number.parseInt(hex.slice(0, 2), HEX_RADIX);
+    const gg = Number.parseInt(hex.slice(2, 4), HEX_RADIX);
+    const bb = Number.parseInt(hex.slice(4, 6), HEX_RADIX);
+    if (Number.isNaN(rr) || Number.isNaN(gg) || Number.isNaN(bb)) {
+      return undefined;
+    }
+    return { b: bb, g: gg, r: rr, type: "rgb" };
   }
   return undefined;
-}
+};
 
-function parseRgbFunc(s: string): Color | undefined {
-  const inner = s.slice(4, -1);
-  const parts = inner.split(",").map((p) => p.trim());
-  if (parts.length !== 3) return undefined;
-  const r = Number.parseInt(parts[0], 10);
-  const g = Number.parseInt(parts[1], 10);
-  const b = Number.parseInt(parts[2], 10);
-  if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) return undefined;
-  if (r < 0 || r > 255 || g < 0 || g > 255 || b < 0 || b > 255) return undefined;
-  return { type: "rgb", r, g, b };
-}
+const parseRgbFunc = (str: string): Color | undefined => {
+  const inner = str.slice(RGB_PREFIX_LEN, -1);
+  const parts = inner.split(",").map((pp) => pp.trim());
+  if (parts.length !== RGB_COMPONENT_COUNT) {
+    return undefined;
+  }
+  const rr = Number.parseInt(parts[0], DECIMAL_RADIX);
+  const gg = Number.parseInt(parts[1], DECIMAL_RADIX);
+  const bb = Number.parseInt(parts[2], DECIMAL_RADIX);
+  if (Number.isNaN(rr) || Number.isNaN(gg) || Number.isNaN(bb)) {
+    return undefined;
+  }
+  if (rr < 0 || rr > MAX_COLOR_VALUE || gg < 0 || gg > MAX_COLOR_VALUE || bb < 0 || bb > MAX_COLOR_VALUE) {
+    return undefined;
+  }
+  return { b: bb, g: gg, r: rr, type: "rgb" };
+};
 
-function parseAnsiFunc(s: string): Color | undefined {
-  const inner = s.slice(5, -1).trim();
-  const n = Number.parseInt(inner, 10);
-  if (Number.isNaN(n) || n < 0 || n > 255) return undefined;
-  return { type: "palette", index: n };
-}
+const parseAnsiFunc = (str: string): Color | undefined => {
+  const inner = str.slice(ANSI_PREFIX_LEN, -1).trim();
+  const nn = Number.parseInt(inner, DECIMAL_RADIX);
+  if (Number.isNaN(nn) || nn < 0 || nn > MAX_COLOR_VALUE) {
+    return undefined;
+  }
+  return { index: nn, type: "palette" };
+};
 
-function parseAnsiStandardFunc(s: string): Color | undefined {
-  const inner = s.slice(14, -1).trim();
-  const n = Number.parseInt(inner, 10);
-  if (Number.isNaN(n) || n < 0 || n > 7) return undefined;
-  return { type: "ansi", index: n };
-}
+const parseAnsiStandardFunc = (str: string): Color | undefined => {
+  const inner = str.slice(ANSI_STANDARD_PREFIX_LEN, -1).trim();
+  const nn = Number.parseInt(inner, DECIMAL_RADIX);
+  if (Number.isNaN(nn) || nn < 0 || nn > MAX_ANSI_STANDARD) {
+    return undefined;
+  }
+  return { index: nn, type: "ansi" };
+};
 
-function parseAnsiBrightFunc(s: string): Color | undefined {
-  const inner = s.slice(12, -1).trim();
-  const n = Number.parseInt(inner, 10);
-  if (Number.isNaN(n) || n < 0 || n > 7) return undefined;
-  return { type: "ansi-bright", index: n };
-}
+const parseAnsiBrightFunc = (str: string): Color | undefined => {
+  const inner = str.slice(ANSI_BRIGHT_PREFIX_LEN, -1).trim();
+  const nn = Number.parseInt(inner, DECIMAL_RADIX);
+  if (Number.isNaN(nn) || nn < 0 || nn > MAX_ANSI_STANDARD) {
+    return undefined;
+  }
+  return { index: nn, type: "ansi-bright" };
+};

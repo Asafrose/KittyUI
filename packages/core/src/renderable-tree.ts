@@ -3,18 +3,25 @@
  * components and syncs mutations to the Rust layout tree via the Bridge.
  */
 
-import type { Renderable } from "./renderable.js";
 import type { MutationEncoder } from "./mutation-encoder.js";
+import type { Renderable } from "./renderable.js";
 import type { ComputedLayout } from "./types.js";
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const NOT_FOUND = -1;
+const SPLICE_DELETE_COUNT = 1;
 
 // ---------------------------------------------------------------------------
 // Tree node metadata
 // ---------------------------------------------------------------------------
 
 interface TreeNode {
-  renderable: Renderable;
-  parent: number | undefined;
   children: number[];
+  parent: number | undefined;
+  renderable: Renderable;
 }
 
 // ---------------------------------------------------------------------------
@@ -43,16 +50,20 @@ export class RenderableTree {
   /** Get the children of a node. */
   children(nodeId: number): Renderable[] {
     const node = this.nodes.get(nodeId);
-    if (!node) return [];
+    if (!node) {
+      return [];
+    }
     return node.children
       .map((id) => this.nodes.get(id)?.renderable)
-      .filter((r): r is Renderable => r !== undefined);
+      .filter((item): item is Renderable => item !== undefined);
   }
 
   /** Get the parent of a node. */
   parent(nodeId: number): Renderable | undefined {
     const node = this.nodes.get(nodeId);
-    if (!node || node.parent === undefined) return undefined;
+    if (!node || node.parent === undefined) {
+      return undefined;
+    }
     return this.nodes.get(node.parent)?.renderable;
   }
 
@@ -103,7 +114,7 @@ export class RenderableTree {
     }
 
     const idx = parentNode.children.indexOf(beforeId);
-    if (idx === -1) {
+    if (idx === NOT_FOUND) {
       throw new Error(`Reference node ${beforeId} is not a child of ${parentId}`);
     }
 
@@ -118,10 +129,12 @@ export class RenderableTree {
    */
   remove(nodeId: number): void {
     const node = this.nodes.get(nodeId);
-    if (!node) return;
+    if (!node) {
+      return;
+    }
 
     // Remove children recursively (copy array since we mutate)
-    for (const childId of [...node.children]) {
+    for (const childId of Array.from(node.children)) {
       this.remove(childId);
     }
 
@@ -130,7 +143,9 @@ export class RenderableTree {
       const parentNode = this.nodes.get(node.parent);
       if (parentNode) {
         const idx = parentNode.children.indexOf(nodeId);
-        if (idx !== -1) parentNode.children.splice(idx, 1);
+        if (idx !== NOT_FOUND) {
+          parentNode.children.splice(idx, SPLICE_DELETE_COUNT);
+        }
       }
     }
 
@@ -189,9 +204,9 @@ export class RenderableTree {
     const nodeId = renderable.nodeId;
 
     this.nodes.set(nodeId, {
-      renderable,
-      parent: parentId,
       children: [],
+      parent: parentId,
+      renderable,
     });
 
     // Encode creation

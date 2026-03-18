@@ -3,9 +3,15 @@
  * them to the canonical NodeStyle type used by the Taffy layout engine.
  */
 
-import type { Dim, NodeStyle, DisplayMode, FlexStyle, GridStyle } from "./types.js";
+import type { Color, Dim, FlexStyle, GridStyle, NodeStyle, TextStyle, TrackDef } from "./types.js";
 import { parseColor } from "./color.js";
-import type { Color, TextStyle } from "./types.js";
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const SPACING_PAIR_LEN = 2;
+const ZERO_DIM: Dim = { type: "cells", value: 0 };
 
 // ---------------------------------------------------------------------------
 // CSS-like input style (what users write)
@@ -26,11 +32,22 @@ import type { Color, TextStyle } from "./types.js";
  * - "auto"
  */
 export interface CSSStyle {
+  alignItems?: "start" | "end" | "center" | "baseline" | "stretch" | undefined;
+  backgroundColor?: string | Color | undefined;
+  color?: string | Color | undefined;
+  columnGap?: DimInput | undefined;
   display?: "flex" | "grid" | undefined;
-
-  // Flex properties
+  flexBasis?: DimInput | undefined;
   flexDirection?: "row" | "column" | "row-reverse" | "column-reverse" | undefined;
+  flexGrow?: number | undefined;
+  flexShrink?: number | undefined;
   flexWrap?: "no-wrap" | "wrap" | "wrap-reverse" | undefined;
+  fontStyle?: "normal" | "italic" | undefined;
+  fontWeight?: "normal" | "bold" | undefined;
+  gap?: DimInput | [DimInput, DimInput] | undefined;
+  gridTemplateColumns?: GridTrackInput[] | undefined;
+  gridTemplateRows?: GridTrackInput[] | undefined;
+  height?: DimInput | undefined;
   justifyContent?:
     | "start"
     | "end"
@@ -39,51 +56,28 @@ export interface CSSStyle {
     | "space-around"
     | "space-evenly"
     | undefined;
-  alignItems?: "start" | "end" | "center" | "baseline" | "stretch" | undefined;
-  flexGrow?: number | undefined;
-  flexShrink?: number | undefined;
-  flexBasis?: DimInput | undefined;
-
-  // Grid properties
-  gridTemplateColumns?: GridTrackInput[] | undefined;
-  gridTemplateRows?: GridTrackInput[] | undefined;
-  columnGap?: DimInput | undefined;
-  rowGap?: DimInput | undefined;
-
-  // Sizing
-  width?: DimInput | undefined;
-  height?: DimInput | undefined;
-  minWidth?: DimInput | undefined;
-  minHeight?: DimInput | undefined;
-  maxWidth?: DimInput | undefined;
-  maxHeight?: DimInput | undefined;
-
-  // Shorthand spacing
-  padding?: DimInput | [DimInput, DimInput] | [DimInput, DimInput, DimInput, DimInput] | undefined;
-  paddingTop?: DimInput | undefined;
-  paddingRight?: DimInput | undefined;
-  paddingBottom?: DimInput | undefined;
-  paddingLeft?: DimInput | undefined;
-
   margin?: DimInput | [DimInput, DimInput] | [DimInput, DimInput, DimInput, DimInput] | undefined;
-  marginTop?: DimInput | undefined;
-  marginRight?: DimInput | undefined;
   marginBottom?: DimInput | undefined;
   marginLeft?: DimInput | undefined;
-
-  gap?: DimInput | [DimInput, DimInput] | undefined;
-
-  // Text style properties
-  color?: string | Color | undefined;
-  backgroundColor?: string | Color | undefined;
-  fontWeight?: "normal" | "bold" | undefined;
-  fontStyle?: "normal" | "italic" | undefined;
+  marginRight?: DimInput | undefined;
+  marginTop?: DimInput | undefined;
+  maxHeight?: DimInput | undefined;
+  maxWidth?: DimInput | undefined;
+  minHeight?: DimInput | undefined;
+  minWidth?: DimInput | undefined;
+  padding?: DimInput | [DimInput, DimInput] | [DimInput, DimInput, DimInput, DimInput] | undefined;
+  paddingBottom?: DimInput | undefined;
+  paddingLeft?: DimInput | undefined;
+  paddingRight?: DimInput | undefined;
+  paddingTop?: DimInput | undefined;
+  rowGap?: DimInput | undefined;
   textDecoration?:
     | "none"
     | "underline"
     | "strikethrough"
     | "overline"
     | undefined;
+  underlineColor?: string | Color | undefined;
   underlineStyle?:
     | "none"
     | "single"
@@ -92,7 +86,7 @@ export interface CSSStyle {
     | "dotted"
     | "dashed"
     | undefined;
-  underlineColor?: string | Color | undefined;
+  width?: DimInput | undefined;
 }
 
 /** Input for a dimension value. */
@@ -106,7 +100,7 @@ export type GridTrackInput = number | string | "auto";
 // ---------------------------------------------------------------------------
 
 /** Convert a DimInput to a Dim. */
-export function parseDim(input: DimInput): Dim {
+export const parseDim = (input: DimInput): Dim => {
   if (input === "auto") {
     return { type: "auto" };
   }
@@ -130,54 +124,73 @@ export function parseDim(input: DimInput): Dim {
     return { type: "cells", value: num };
   }
   return { type: "auto" };
-}
+};
 
 /** Expand a shorthand spacing value into [top, right, bottom, left]. */
-function expandSpacing(
+const expandSpacing = (
   input: DimInput | [DimInput, DimInput] | [DimInput, DimInput, DimInput, DimInput],
-): [Dim, Dim, Dim, Dim] {
+): [Dim, Dim, Dim, Dim] => {
   if (Array.isArray(input)) {
-    if (input.length === 2) {
-      const v = parseDim(input[0]);
-      const h = parseDim(input[1]);
-      return [v, h, v, h];
+    if (input.length === SPACING_PAIR_LEN) {
+      const vertical = parseDim(input[0]);
+      const horizontal = parseDim(input[1]);
+      return [vertical, horizontal, vertical, horizontal];
     }
     return [parseDim(input[0]), parseDim(input[1]), parseDim(input[2]), parseDim(input[3])];
   }
-  const d = parseDim(input);
-  return [d, d, d, d];
-}
+  const dim = parseDim(input);
+  return [dim, dim, dim, dim];
+};
 
 /** Parse a grid track input into a TrackDef. */
-function parseTrack(input: GridTrackInput): import("./types.js").TrackDef {
-  if (input === "auto") return { type: "auto" };
-  if (typeof input === "number") return { type: "cells", value: input };
-  const s = input.trim();
-  if (s === "auto") return { type: "auto" };
-  if (s.endsWith("fr")) {
-    const v = Number.parseFloat(s);
-    if (!Number.isNaN(v)) return { type: "fr", value: v };
+const parseTrack = (input: GridTrackInput): TrackDef => {
+  if (input === "auto") {
+    return { type: "auto" };
   }
-  if (s.endsWith("%")) {
-    const v = Number.parseFloat(s);
-    if (!Number.isNaN(v)) return { type: "percent", value: v };
+  if (typeof input === "number") {
+    return { type: "cells", value: input };
   }
-  const n = Number.parseFloat(s);
-  if (!Number.isNaN(n)) return { type: "cells", value: n };
+  const trimmed = input.trim();
+  if (trimmed === "auto") {
+    return { type: "auto" };
+  }
+  if (trimmed.endsWith("fr")) {
+    const val = Number.parseFloat(trimmed);
+    if (!Number.isNaN(val)) {
+      return { type: "fr", value: val };
+    }
+  }
+  if (trimmed.endsWith("%")) {
+    const val = Number.parseFloat(trimmed);
+    if (!Number.isNaN(val)) {
+      return { type: "percent", value: val };
+    }
+  }
+  const num = Number.parseFloat(trimmed);
+  if (!Number.isNaN(num)) {
+    return { type: "cells", value: num };
+  }
   return { type: "auto" };
-}
+};
 
 /** Resolve a color input (string or Color object) to a Color. */
-function resolveColor(input: string | Color | undefined): Color | undefined {
-  if (input === undefined) return undefined;
-  if (typeof input === "string") return parseColor(input);
+const resolveColor = (input: string | Color | undefined): Color | undefined => {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (typeof input === "string") {
+    return parseColor(input);
+  }
   return input;
-}
+};
+
+/** Create a default zero-padding tuple. */
+const defaultSpacing = (): [Dim, Dim, Dim, Dim] => [ZERO_DIM, ZERO_DIM, ZERO_DIM, ZERO_DIM];
 
 /**
  * Normalize a CSS-like style object into the canonical NodeStyle + TextStyle.
  */
-export function normalizeStyle(css: CSSStyle): { node: NodeStyle; text: TextStyle } {
+export const normalizeStyle = (css: CSSStyle): { node: NodeStyle; text: TextStyle } => {
   const node: NodeStyle = {};
   const text: TextStyle = {};
 
@@ -190,67 +203,77 @@ export function normalizeStyle(css: CSSStyle): { node: NodeStyle; text: TextStyl
     if (css.gridTemplateRows) {
       grid.rows = css.gridTemplateRows.map(parseTrack);
     }
-    if (css.columnGap !== undefined) grid.columnGap = parseDim(css.columnGap);
-    if (css.rowGap !== undefined) grid.rowGap = parseDim(css.rowGap);
-    node.display = { type: "grid", grid };
+    if (css.columnGap !== undefined) {
+      grid.columnGap = parseDim(css.columnGap);
+    }
+    if (css.rowGap !== undefined) {
+      grid.rowGap = parseDim(css.rowGap);
+    }
+    node.display = { grid, type: "grid" };
   } else {
     const flex: FlexStyle = {};
-    if (css.flexDirection !== undefined) flex.direction = css.flexDirection;
-    if (css.flexWrap !== undefined) flex.wrap = css.flexWrap;
-    if (css.justifyContent !== undefined) flex.justify = css.justifyContent;
-    if (css.alignItems !== undefined) flex.alignItems = css.alignItems;
-    if (css.flexGrow !== undefined) flex.grow = css.flexGrow;
-    if (css.flexShrink !== undefined) flex.shrink = css.flexShrink;
-    if (css.flexBasis !== undefined) flex.basis = parseDim(css.flexBasis);
-    node.display = { type: "flex", flex };
+    if (css.flexDirection !== undefined) {
+      flex.direction = css.flexDirection;
+    }
+    if (css.flexWrap !== undefined) {
+      flex.wrap = css.flexWrap;
+    }
+    if (css.justifyContent !== undefined) {
+      flex.justify = css.justifyContent;
+    }
+    if (css.alignItems !== undefined) {
+      flex.alignItems = css.alignItems;
+    }
+    if (css.flexGrow !== undefined) {
+      flex.grow = css.flexGrow;
+    }
+    if (css.flexShrink !== undefined) {
+      flex.shrink = css.flexShrink;
+    }
+    if (css.flexBasis !== undefined) {
+      flex.basis = parseDim(css.flexBasis);
+    }
+    node.display = { flex, type: "flex" };
   }
 
   // Sizing
-  if (css.width !== undefined) node.width = parseDim(css.width);
-  if (css.height !== undefined) node.height = parseDim(css.height);
-  if (css.minWidth !== undefined) node.minWidth = parseDim(css.minWidth);
-  if (css.minHeight !== undefined) node.minHeight = parseDim(css.minHeight);
-  if (css.maxWidth !== undefined) node.maxWidth = parseDim(css.maxWidth);
-  if (css.maxHeight !== undefined) node.maxHeight = parseDim(css.maxHeight);
+  if (css.width !== undefined) {
+    node.width = parseDim(css.width);
+  }
+  if (css.height !== undefined) {
+    node.height = parseDim(css.height);
+  }
+  if (css.minWidth !== undefined) {
+    node.minWidth = parseDim(css.minWidth);
+  }
+  if (css.minHeight !== undefined) {
+    node.minHeight = parseDim(css.minHeight);
+  }
+  if (css.maxWidth !== undefined) {
+    node.maxWidth = parseDim(css.maxWidth);
+  }
+  if (css.maxHeight !== undefined) {
+    node.maxHeight = parseDim(css.maxHeight);
+  }
 
   // Padding (shorthand then individual overrides)
   if (css.padding !== undefined) {
     node.padding = expandSpacing(css.padding);
   }
   if (css.paddingTop !== undefined) {
-    node.padding = node.padding ?? [
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-    ];
+    node.padding = node.padding ?? defaultSpacing();
     node.padding[0] = parseDim(css.paddingTop);
   }
   if (css.paddingRight !== undefined) {
-    node.padding = node.padding ?? [
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-    ];
+    node.padding = node.padding ?? defaultSpacing();
     node.padding[1] = parseDim(css.paddingRight);
   }
   if (css.paddingBottom !== undefined) {
-    node.padding = node.padding ?? [
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-    ];
+    node.padding = node.padding ?? defaultSpacing();
     node.padding[2] = parseDim(css.paddingBottom);
   }
   if (css.paddingLeft !== undefined) {
-    node.padding = node.padding ?? [
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-    ];
+    node.padding = node.padding ?? defaultSpacing();
     node.padding[3] = parseDim(css.paddingLeft);
   }
 
@@ -259,39 +282,19 @@ export function normalizeStyle(css: CSSStyle): { node: NodeStyle; text: TextStyl
     node.margin = expandSpacing(css.margin);
   }
   if (css.marginTop !== undefined) {
-    node.margin = node.margin ?? [
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-    ];
+    node.margin = node.margin ?? defaultSpacing();
     node.margin[0] = parseDim(css.marginTop);
   }
   if (css.marginRight !== undefined) {
-    node.margin = node.margin ?? [
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-    ];
+    node.margin = node.margin ?? defaultSpacing();
     node.margin[1] = parseDim(css.marginRight);
   }
   if (css.marginBottom !== undefined) {
-    node.margin = node.margin ?? [
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-    ];
+    node.margin = node.margin ?? defaultSpacing();
     node.margin[2] = parseDim(css.marginBottom);
   }
   if (css.marginLeft !== undefined) {
-    node.margin = node.margin ?? [
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-      { type: "cells", value: 0 },
-    ];
+    node.margin = node.margin ?? defaultSpacing();
     node.margin[3] = parseDim(css.marginLeft);
   }
 
@@ -300,8 +303,8 @@ export function normalizeStyle(css: CSSStyle): { node: NodeStyle; text: TextStyl
     if (Array.isArray(css.gap)) {
       node.gap = [parseDim(css.gap[0]), parseDim(css.gap[1])];
     } else {
-      const d = parseDim(css.gap);
-      node.gap = [d, d];
+      const dim = parseDim(css.gap);
+      node.gap = [dim, dim];
     }
   }
 
@@ -309,12 +312,24 @@ export function normalizeStyle(css: CSSStyle): { node: NodeStyle; text: TextStyl
   text.fg = resolveColor(css.color);
   text.bg = resolveColor(css.backgroundColor);
   text.underlineColor = resolveColor(css.underlineColor);
-  if (css.fontWeight === "bold") text.bold = true;
-  if (css.fontStyle === "italic") text.italic = true;
-  if (css.textDecoration === "underline") text.underline = true;
-  if (css.textDecoration === "strikethrough") text.strikethrough = true;
-  if (css.textDecoration === "overline") text.overline = true;
-  if (css.underlineStyle !== undefined) text.underlineStyle = css.underlineStyle;
+  if (css.fontWeight === "bold") {
+    text.bold = true;
+  }
+  if (css.fontStyle === "italic") {
+    text.italic = true;
+  }
+  if (css.textDecoration === "underline") {
+    text.underline = true;
+  }
+  if (css.textDecoration === "strikethrough") {
+    text.strikethrough = true;
+  }
+  if (css.textDecoration === "overline") {
+    text.overline = true;
+  }
+  if (css.underlineStyle !== undefined) {
+    text.underlineStyle = css.underlineStyle;
+  }
 
   return { node, text };
-}
+};

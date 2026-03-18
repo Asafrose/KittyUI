@@ -5,23 +5,22 @@
  * The Renderable manages its own node ID, style, text content, and lifecycle.
  */
 
+import { type CSSStyle, normalizeStyle } from "./style.js";
 import type { ComputedLayout, NodeStyle, TextStyle } from "./types.js";
-import { normalizeStyle, type CSSStyle } from "./style.js";
 
 // ---------------------------------------------------------------------------
 // ID generation
 // ---------------------------------------------------------------------------
 
-let nextNodeId = 1;
+const INITIAL_NODE_ID = 1;
+let nextNodeId = INITIAL_NODE_ID;
 
-function allocNodeId(): number {
-  return nextNodeId++;
-}
+const allocNodeId = (): number => nextNodeId++;
 
 /** Reset the ID counter (for testing). */
-export function resetNodeIdCounter(): void {
-  nextNodeId = 1;
-}
+export const resetNodeIdCounter = (): void => {
+  nextNodeId = INITIAL_NODE_ID;
+};
 
 // ---------------------------------------------------------------------------
 // Renderable
