@@ -10,6 +10,8 @@
 const EVENT_KEYBOARD = 1;
 const EVENT_MOUSE = 2;
 const EVENT_RESIZE = 3;
+const EVENT_FOCUS = 4;
+const EVENT_BLUR = 5;
 
 // -----------------------------------------------------------------------
 // Event types
@@ -41,7 +43,22 @@ export interface ResizeEvent {
   pixelHeight: number;
 }
 
-export type KittyEvent = KeyboardEvent | MouseEvent | ResizeEvent;
+export interface FocusEvent {
+  type: "focus";
+  nodeId: number;
+}
+
+export interface BlurEvent {
+  type: "blur";
+  nodeId: number;
+}
+
+export type KittyEvent =
+  | KeyboardEvent
+  | MouseEvent
+  | ResizeEvent
+  | FocusEvent
+  | BlurEvent;
 
 // -----------------------------------------------------------------------
 // Decoder
@@ -124,6 +141,20 @@ export class EventDecoder {
             pixelWidth,
             pixelHeight,
           });
+          break;
+        }
+        case EVENT_FOCUS: {
+          if (offset + 4 > data.byteLength) { return events; }
+          const focusNodeId = view.getUint32(offset, true);
+          offset += 4;
+          events.push({ type: "focus", nodeId: focusNodeId });
+          break;
+        }
+        case EVENT_BLUR: {
+          if (offset + 4 > data.byteLength) { return events; }
+          const blurNodeId = view.getUint32(offset, true);
+          offset += 4;
+          events.push({ type: "blur", nodeId: blurNodeId });
           break;
         }
         default:

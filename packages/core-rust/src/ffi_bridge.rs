@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
+use crate::focus::{FocusManager, FocusMeta};
+use crate::hit_test::HitTester;
 use crate::layout::{LayoutNodeId, LayoutTree, NodeStyle};
 
 // ---------------------------------------------------------------------------
@@ -28,6 +30,8 @@ const OP_SET_TEXT: u8 = 6;
 const EVENT_KEYBOARD: u8 = 1;
 const EVENT_MOUSE: u8 = 2;
 const EVENT_RESIZE: u8 = 3;
+const EVENT_FOCUS: u8 = 4;
+const EVENT_BLUR: u8 = 5;
 
 // ---------------------------------------------------------------------------
 // Global engine state
@@ -51,6 +55,12 @@ struct EngineState {
     rows: f32,
     /// Event callback function pointer (JS side).
     event_callback: Option<extern "C" fn(*const u8, u32)>,
+    /// Focus management.
+    focus: FocusManager,
+    /// Hit-testing engine.
+    hit_tester: HitTester,
+    /// Reverse map from layout node ids to user-facing u32 ids.
+    reverse_node_map: HashMap<LayoutNodeId, u32>,
 }
 
 impl EngineState {
@@ -65,7 +75,15 @@ impl EngineState {
             cols: 80.0,
             rows: 24.0,
             event_callback: None,
+            focus: FocusManager::new(),
+            hit_tester: HitTester::new(),
+            reverse_node_map: HashMap::new(),
         }
+    }
+
+    /// Look up the user-facing u32 id for a layout node id.
+    fn user_id(&self, layout_id: LayoutNodeId) -> Option<u32> {
+        self.reverse_node_map.get(&layout_id).copied()
     }
 }
 
@@ -331,6 +349,7 @@ fn mut_create_node(reader: &mut MutationReader<'_>, state: &mut EngineState) -> 
     let style = parse_style_json(json_bytes);
     if let Ok(layout_id) = state.layout.add_leaf(&style) {
         state.node_map.insert(node_id, layout_id);
+        state.reverse_node_map.insert(layout_id, node_id);
         if state.root_node.is_none() {
             state.root_node = Some(node_id);
         }
@@ -343,6 +362,9 @@ fn mut_remove_node(reader: &mut MutationReader<'_>, state: &mut EngineState) -> 
         return false;
     };
     if let Some(layout_id) = state.node_map.remove(&node_id) {
+        state.reverse_node_map.remove(&layout_id);
+        state.focus.remove_meta(layout_id);
+        state.hit_tester.remove_meta(layout_id);
         let _ = state.layout.remove(layout_id);
     }
     state.text_content.remove(&node_id);
@@ -573,6 +595,151 @@ fn push_resize_event(
     state
         .event_buffer
         .extend_from_slice(&pixel_height.to_le_bytes());
+}
+
+// ---------------------------------------------------------------------------
+// Input system — keyboard / mouse callbacks, focus management
+// ---------------------------------------------------------------------------
+
+/// Push a keyboard event from raw terminal input.
+#[no_mangle]
+pub extern "C" fn push_key_event(key_code: u32, modifiers: u8, event_type: u8) {
+    with_engine(|state| {
+        push_keyboard_event(state, key_code, modifiers, event_type);
+    });
+}
+
+/// Push a mouse event with automatic hit-testing at `(x, y)`.
+#[no_mangle]
+pub extern "C" fn push_mouse_event_with_hit_test(
+    button: u8,
+    x: u16,
+    y: u16,
+    pixel_x: u16,
+    pixel_y: u16,
+    modifiers: u8,
+) {
+    with_engine(|state| {
+        let fx = f32::from(x);
+        let fy = f32::from(y);
+
+        let node_id = if let Some(root_id) = state.root_node {
+            if let Some(&root_layout_id) = state.node_map.get(&root_id) {
+                state.hit_tester.set_root(root_layout_id);
+                state
+                    .hit_tester
+                    .hit_test(&state.layout, fx, fy)
+                    .ok()
+                    .and_then(|r| r.target)
+                    .and_then(|lid| state.user_id(lid))
+                    .unwrap_or(u32::MAX)
+            } else {
+                u32::MAX
+            }
+        } else {
+            u32::MAX
+        };
+
+        push_mouse_event(state, button, x, y, pixel_x, pixel_y, modifiers, node_id);
+    });
+}
+
+/// Focus a specific node by its user-facing id.
+///
+/// Returns `1` if the node was focused, `0` otherwise.
+#[no_mangle]
+pub extern "C" fn focus(node_id: u32) -> u8 {
+    with_engine(|state| {
+        let Some(&layout_id) = state.node_map.get(&node_id) else {
+            return 0;
+        };
+        let events = state.focus.focus_node(layout_id);
+        for ev in &events {
+            push_focus_event(state, ev);
+        }
+        u8::from(!events.is_empty())
+    })
+}
+
+/// Blur the currently focused node.
+///
+/// Returns `1` if a node was blurred, `0` if nothing was focused.
+#[no_mangle]
+pub extern "C" fn blur() -> u8 {
+    with_engine(|state| {
+        if let Some(ev) = state.focus.blur() {
+            push_focus_event(state, &ev);
+            1
+        } else {
+            0
+        }
+    })
+}
+
+/// Return the user-facing id of the currently focused node, or `u32::MAX`.
+#[no_mangle]
+pub extern "C" fn get_focused_node() -> u32 {
+    with_engine(|state| {
+        state
+            .focus
+            .focused()
+            .and_then(|lid| state.user_id(lid))
+            .unwrap_or(u32::MAX)
+    })
+}
+
+/// Mark a node as focusable with `tab_index = 0`.
+#[no_mangle]
+pub extern "C" fn set_focusable(node_id: u32, focusable: u8) {
+    with_engine(|state| {
+        if let Some(&layout_id) = state.node_map.get(&node_id) {
+            if focusable != 0 {
+                state.focus.set_meta(layout_id, FocusMeta::default());
+            } else {
+                state.focus.remove_meta(layout_id);
+            }
+        }
+    });
+}
+
+/// Set the tab index for a node.
+#[no_mangle]
+pub extern "C" fn set_tab_index(node_id: u32, tab_index: i32) {
+    with_engine(|state| {
+        if let Some(&layout_id) = state.node_map.get(&node_id) {
+            state.focus.set_meta(layout_id, FocusMeta { tab_index });
+        }
+    });
+}
+
+/// Enable or disable focus trapping on a node.
+#[no_mangle]
+pub extern "C" fn set_focus_trap(node_id: u32, enable: u8) {
+    with_engine(|state| {
+        if enable != 0 {
+            if let Some(&layout_id) = state.node_map.get(&node_id) {
+                state.focus.set_trap(layout_id);
+            }
+        } else {
+            state.focus.clear_trap();
+        }
+    });
+}
+
+/// Push a focus/blur event into the event buffer.
+fn push_focus_event(state: &mut EngineState, event: &crate::focus::FocusEvent) {
+    match event {
+        crate::focus::FocusEvent::Focus(lid) => {
+            state.event_buffer.push(EVENT_FOCUS);
+            let uid = state.user_id(*lid).unwrap_or(u32::MAX);
+            state.event_buffer.extend_from_slice(&uid.to_le_bytes());
+        }
+        crate::focus::FocusEvent::Blur(lid) => {
+            state.event_buffer.push(EVENT_BLUR);
+            let uid = state.user_id(*lid).unwrap_or(u32::MAX);
+            state.event_buffer.extend_from_slice(&uid.to_le_bytes());
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -982,6 +1149,250 @@ mod tests {
         with_engine(|state| {
             assert!(!state.dirty);
         });
+        teardown();
+    }
+
+    // -- Input FFI tests --
+
+    #[test]
+    #[serial]
+    fn push_key_event_adds_to_buffer() {
+        setup();
+        push_key_event(65, 0b0000_0001, 1);
+        with_engine(|state| {
+            assert_eq!(state.event_buffer.len(), 7);
+            assert_eq!(state.event_buffer[0], EVENT_KEYBOARD);
+        });
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn focus_and_blur_lifecycle() {
+        setup();
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(
+            1,
+            r#"{"width":80,"height":24,"flexDirection":"column"}"#,
+        ));
+        buf.extend(encode_create_node(2, r#"{"width":20,"height":10}"#));
+        buf.extend(encode_append_child(1, 2));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        set_focusable(2, 1);
+        let result = focus(2);
+        assert_eq!(result, 1);
+        assert_eq!(get_focused_node(), 2);
+
+        with_engine(|state| {
+            assert!(!state.event_buffer.is_empty());
+            assert_eq!(state.event_buffer[0], EVENT_FOCUS);
+            let nid = u32::from_le_bytes(state.event_buffer[1..5].try_into().unwrap());
+            assert_eq!(nid, 2);
+        });
+
+        with_engine(|state| {
+            state.event_buffer.clear();
+        });
+
+        let result = blur();
+        assert_eq!(result, 1);
+        assert_eq!(get_focused_node(), u32::MAX);
+
+        with_engine(|state| {
+            assert!(!state.event_buffer.is_empty());
+            assert_eq!(state.event_buffer[0], EVENT_BLUR);
+        });
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn focus_unfocusable_node_fails() {
+        setup();
+        let buf = encode_create_node(1, r#"{"width":80,"height":24}"#);
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        let result = focus(1);
+        assert_eq!(result, 0);
+        assert_eq!(get_focused_node(), u32::MAX);
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn focus_nonexistent_node_fails() {
+        setup();
+        let result = focus(999);
+        assert_eq!(result, 0);
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn set_tab_index_configures_node() {
+        setup();
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(
+            1,
+            r#"{"width":80,"height":24,"flexDirection":"column"}"#,
+        ));
+        buf.extend(encode_create_node(2, r#"{"width":20,"height":5}"#));
+        buf.extend(encode_create_node(3, r#"{"width":20,"height":5}"#));
+        buf.extend(encode_append_child(1, 2));
+        buf.extend(encode_append_child(1, 3));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        set_tab_index(2, 0);
+        set_tab_index(3, 1);
+
+        focus(3);
+        assert_eq!(get_focused_node(), 3);
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn set_focusable_false_removes_focusability() {
+        setup();
+        let buf = encode_create_node(1, r#"{"width":80,"height":24}"#);
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        set_focusable(1, 1);
+        let result = focus(1);
+        assert_eq!(result, 1);
+
+        set_focusable(1, 0);
+        assert_eq!(get_focused_node(), u32::MAX);
+
+        let result = focus(1);
+        assert_eq!(result, 0);
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn set_focus_trap_and_clear() {
+        setup();
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(
+            1,
+            r#"{"width":80,"height":24,"flexDirection":"column"}"#,
+        ));
+        buf.extend(encode_create_node(2, r#"{"width":40,"height":12}"#));
+        buf.extend(encode_create_node(3, r#"{"width":20,"height":5}"#));
+        buf.extend(encode_append_child(1, 2));
+        buf.extend(encode_append_child(1, 3));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        set_focusable(2, 1);
+        set_focusable(3, 1);
+
+        set_focus_trap(1, 1);
+        with_engine(|state| {
+            assert!(state.focus.trap_root().is_some());
+        });
+
+        set_focus_trap(1, 0);
+        with_engine(|state| {
+            assert!(state.focus.trap_root().is_none());
+        });
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn blur_when_nothing_focused_returns_zero() {
+        setup();
+        let result = blur();
+        assert_eq!(result, 0);
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn remove_node_clears_focus() {
+        setup();
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(
+            1,
+            r#"{"width":80,"height":24,"flexDirection":"column"}"#,
+        ));
+        buf.extend(encode_create_node(2, r#"{"width":20,"height":10}"#));
+        buf.extend(encode_append_child(1, 2));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        set_focusable(2, 1);
+        focus(2);
+        assert_eq!(get_focused_node(), 2);
+
+        let remove_buf = encode_remove_node(2);
+        unsafe { apply_mutations(remove_buf.as_ptr(), remove_buf.len() as u32) };
+        assert_eq!(get_focused_node(), u32::MAX);
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn push_mouse_event_with_hit_test_no_root() {
+        setup();
+        push_mouse_event_with_hit_test(0, 10, 20, 80, 160, 0);
+        with_engine(|state| {
+            assert_eq!(state.event_buffer.len(), 15);
+            assert_eq!(state.event_buffer[0], EVENT_MOUSE);
+            let node_id = u32::from_le_bytes(state.event_buffer[11..15].try_into().unwrap());
+            assert_eq!(node_id, u32::MAX);
+        });
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn push_mouse_event_with_hit_test_hits_node() {
+        setup();
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(
+            1,
+            r#"{"width":80,"height":24,"flexDirection":"column"}"#,
+        ));
+        buf.extend(encode_create_node(2, r#"{"width":20,"height":10}"#));
+        buf.extend(encode_append_child(1, 2));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+        render_frame();
+
+        push_mouse_event_with_hit_test(0, 5, 5, 40, 40, 0);
+        with_engine(|state| {
+            assert_eq!(state.event_buffer.len(), 15);
+            let node_id = u32::from_le_bytes(state.event_buffer[11..15].try_into().unwrap());
+            assert_eq!(node_id, 2);
+        });
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn focus_event_encoding() {
+        setup();
+        let buf = encode_create_node(1, r#"{"width":80,"height":24}"#);
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+        set_focusable(1, 1);
+        with_engine(|state| {
+            state.event_buffer.clear();
+        });
+
+        focus(1);
+        with_engine(|state| {
+            assert_eq!(state.event_buffer.len(), 5);
+            assert_eq!(state.event_buffer[0], EVENT_FOCUS);
+            let nid = u32::from_le_bytes(state.event_buffer[1..5].try_into().unwrap());
+            assert_eq!(nid, 1);
+        });
+
         teardown();
     }
 }
