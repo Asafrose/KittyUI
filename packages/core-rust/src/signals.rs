@@ -93,9 +93,15 @@ mod tests {
         unsafe {
             libc::raise(libc::SIGWINCH);
         }
-        // Give the signal handler a moment to run.
-        std::thread::sleep(std::time::Duration::from_millis(10));
-
-        assert!(resize_received());
+        // Poll with back-off — CI runners can be slow to deliver signals.
+        let mut received = false;
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            if resize_received() {
+                received = true;
+                break;
+            }
+        }
+        assert!(received, "SIGWINCH was not delivered within 200 ms");
     }
 }
