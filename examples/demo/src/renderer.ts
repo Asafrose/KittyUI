@@ -61,36 +61,65 @@ const colorToAnsiBg = (color: Color): string => {
 // Renderer
 // ---------------------------------------------------------------------------
 
+/** Format a Color for debug output. */
+const colorName = (color: Color): string => {
+  if (color.type === "rgb") return `rgb(${color.r},${color.g},${color.b})`;
+  if (color.type === "ansi") return `ansi(${color.index})`;
+  if (color.type === "ansi-bright") return `ansi-bright(${color.index})`;
+  if (color.type === "palette") return `palette(${color.index})`;
+  return "unknown";
+};
+
 export interface RendererOptions {
   bridge?: Bridge;
   tree: RenderableTree;
+  debug?: boolean;
 }
 
 export class DemoRenderer {
   private bridge: Bridge | undefined;
   private tree: RenderableTree;
+  private debug: boolean;
   private cols: number;
   private rows: number;
 
   constructor(opts: RendererOptions) {
     this.bridge = opts.bridge;
     this.tree = opts.tree;
+    this.debug = opts.debug ?? false;
     this.cols = process.stdout.columns || 80;
     this.rows = process.stdout.rows || 24;
   }
 
-  /** Enter alternate screen and hide cursor. */
+  /** Enter alternate screen and hide cursor (skipped in debug mode). */
   setup(): void {
-    process.stdout.write(enterAltScreen + hideCursor + clearScreen);
+    if (!this.debug) {
+      process.stdout.write(enterAltScreen + hideCursor + clearScreen);
+    }
+    if (this.debug) {
+      this.log(`Terminal dimensions: ${this.cols}x${this.rows}`);
+      this.log(`Layout engine: ${this.bridge ? "native (Rust)" : "pure-TS"}`);
+      this.log(`Tree size: ${this.tree.size} nodes`);
+    }
     process.on("resize", () => {
       this.cols = process.stdout.columns || 80;
       this.rows = process.stdout.rows || 24;
+      if (this.debug) {
+        this.log(`Resize: ${this.cols}x${this.rows}`);
+      }
     });
   }
 
-  /** Exit alternate screen and show cursor. */
+  /** Exit alternate screen and show cursor (skipped in debug mode). */
   cleanup(): void {
-    process.stdout.write(resetStyle + showCursor + exitAltScreen);
+    if (!this.debug) {
+      process.stdout.write(resetStyle + showCursor + exitAltScreen);
+    }
+  }
+
+  /** Write a debug message to stderr. */
+  private log(msg: string): void {
+    process.stderr.write(`[debug] ${msg}\n`);
   }
 
   /** Run one render frame: compute layout, then paint. */
@@ -110,14 +139,33 @@ export class DemoRenderer {
 
     this.tree.applyLayouts(layouts);
 
+    if (this.debug) {
+      this.log(`--- Frame (${layouts.size} layouts) ---`);
+      this.logLayouts(layouts);
+    }
+
     // Paint
-    let buf = clearScreen;
+    let buf = this.debug ? "" : clearScreen;
     const rootId = this.tree.root;
     if (rootId !== undefined) {
       buf += this.paintNode(rootId, 0, 0);
     }
     buf += resetStyle;
-    process.stdout.write(buf);
+    if (!this.debug) {
+      process.stdout.write(buf);
+    }
+  }
+
+  /** Log all computed layouts to stderr. */
+  private logLayouts(layouts: Map<number, ComputedLayout>): void {
+    for (const [nodeId, layout] of layouts) {
+      const renderable = this.tree.get(nodeId);
+      const text = renderable?.text;
+      const label = text ? ` text="${text.slice(0, 30)}${text.length > 30 ? "..." : ""}"` : "";
+      this.log(
+        `  node=${nodeId} x=${layout.x} y=${layout.y} w=${layout.width} h=${layout.height}${label}`,
+      );
+    }
   }
 
   private paintNode(nodeId: number, offsetX: number, offsetY: number): string {
@@ -135,12 +183,23 @@ export class DemoRenderer {
     // Paint background
     const bgColor = renderable.textStyle.bg;
     if (bgColor) {
+      if (this.debug) {
+        this.log(
+          `  draw bg node=${nodeId} pos=(${absX},${absY}) size=${layout.width}x${layout.height} color=${colorName(bgColor)}`,
+        );
+      }
       buf += this.paintBackground(absX, absY, layout.width, layout.height, bgColor);
     }
 
     // Paint text content
     const text = renderable.text;
     if (text) {
+      const fgColor = renderable.textStyle.fg;
+      if (this.debug) {
+        this.log(
+          `  draw text node=${nodeId} pos=(${absX},${absY}) size=${layout.width}x${layout.height} fg=${fgColor ? colorName(fgColor) : "default"} text="${text.slice(0, 40)}${text.length > 40 ? "..." : ""}"`,
+        );
+      }
       buf += this.paintText(absX, absY, layout, renderable);
     }
 

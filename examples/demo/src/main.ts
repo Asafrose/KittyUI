@@ -15,6 +15,12 @@ import { App } from "./app.js";
 import { DemoRenderer } from "./renderer.js";
 
 // ---------------------------------------------------------------------------
+// CLI flags
+// ---------------------------------------------------------------------------
+
+const debug = process.argv.includes("--debug");
+
+// ---------------------------------------------------------------------------
 // Bootstrap
 // ---------------------------------------------------------------------------
 
@@ -51,11 +57,20 @@ setTimeout(() => {
   const renderer = new DemoRenderer({
     bridge: nativeReady ? bridge : undefined,
     tree,
+    debug,
   });
   renderer.setup();
 
   // Initial render
   renderer.renderFrame();
+
+  if (debug) {
+    // In debug mode, render once and exit
+    renderer.cleanup();
+    root.unmount();
+    if (nativeReady) bridge.shutdown();
+    process.exit(0);
+  }
 
   // Render loop
   const renderLoop = setInterval(() => {
