@@ -14,6 +14,60 @@ export type { KittyEvent, KeyboardEvent, MouseEvent, ResizeEvent } from "./event
 export { Bridge } from "./bridge.js";
 export type { InitResult, NodeLayout } from "./bridge.js";
 
+// Core types (mirrors Rust structs)
+export type {
+  Color,
+  AnsiColor,
+  AnsiBrightColor,
+  PaletteColor,
+  RgbColor,
+  UnderlineStyle,
+  TextStyle,
+  Cell,
+  CellBuffer,
+  Dim,
+  DimCells,
+  DimPercent,
+  DimAuto,
+  FlexDirection,
+  FlexWrap,
+  JustifyContent,
+  AlignItems,
+  FlexStyle,
+  TrackDef,
+  GridStyle,
+  DisplayMode,
+  DisplayFlex,
+  DisplayGrid,
+  NodeStyle,
+  ComputedLayout,
+  Key,
+  Modifiers,
+  KeyEventType,
+  KeyEvent,
+  MouseButton,
+  MouseEventKind,
+  MouseEvent as MouseEventType,
+  ResizeEvent as ResizeEventType,
+  HitNodeMeta,
+  HitResult,
+  FocusMeta,
+  FocusEvent,
+} from "./types.js";
+
+// Color parsing
+export { parseColor } from "./color.js";
+
+// Style normalization
+export type { CSSStyle, DimInput, GridTrackInput } from "./style.js";
+export { normalizeStyle, parseDim } from "./style.js";
+
+// Renderable base class
+export { Renderable, resetNodeIdCounter } from "./renderable.js";
+
+// RenderableTree
+export { RenderableTree } from "./renderable-tree.js";
+
 /**
  * Calls the native Rust `hello()` function and returns its string result.
  *
