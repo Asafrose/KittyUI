@@ -3,12 +3,16 @@
  *
  * Creates the rendering pipeline using the React reconciler:
  *   Bridge -> MutationEncoder -> RenderableTree -> createRoot -> JSX
+ *
+ * Then renders to the terminal using a simple TS-side ANSI renderer
+ * that reads computed layouts from the Rust engine.
  */
 
 import { createElement } from "react";
 import { Bridge, MutationEncoder, RenderableTree } from "@kittyui/core";
 import { createRoot } from "@kittyui/react";
 import { App } from "./app.js";
+import { DemoRenderer } from "./renderer.js";
 
 // ---------------------------------------------------------------------------
 // Bootstrap
@@ -20,11 +24,8 @@ let nativeReady = false;
 
 if (bridge.nativeAvailable) {
   const info = bridge.init();
-  console.log(
-    `KittyUI native engine v${info.versionMajor}.${info.versionMinor}.${info.versionPatch}` +
-      ` (batched FFI: ${info.batchedFfi})`,
-  );
   nativeReady = true;
+  void info; // Used below after React mounts
 } else {
   console.log("Native library not found — running in tree-only mode.");
   console.log("Build the native library with: bun run build:native");
@@ -42,33 +43,34 @@ const root = createRoot(tree);
 root.render(createElement(App));
 
 // ---------------------------------------------------------------------------
-// Render loop — wait for React to flush, then start the native render loop
+// Start rendering after React commits the initial tree
 // ---------------------------------------------------------------------------
 
-// React concurrent mode schedules work asynchronously. Use setTimeout to
-// give the reconciler a tick to commit the initial tree before we flush
-// mutations to Rust and start the render loop.
+const FPS = 30;
+const FRAME_MS = Math.floor(1000 / FPS);
+
 setTimeout(() => {
-  console.log(`Tree built: ${tree.size} nodes`);
-
-  if (nativeReady) {
-    tree.flushDirtyStyles();
-    bridge.flushMutations();
-    bridge.startRenderLoop();
-
-    // Keep the process alive — the render loop runs on a background Rust thread.
-    const keepAlive = setInterval(() => {}, 1 << 30);
-
-    process.on("SIGINT", () => {
-      clearInterval(keepAlive);
-      bridge.stopRenderLoop();
-      root.unmount();
-      bridge.shutdown();
-      process.exit(0);
-    });
-
-    console.log("Demo running — press Ctrl+C to exit.");
-  } else {
-    console.log("React tree mounted successfully (no rendering without native engine).");
+  if (!nativeReady) {
+    console.log(`React tree mounted: ${tree.size} nodes (no rendering without native engine).`);
+    return;
   }
+
+  const renderer = new DemoRenderer({ bridge, tree });
+  renderer.setup();
+
+  // Initial render
+  renderer.renderFrame();
+
+  // Render loop on the TS side
+  const renderLoop = setInterval(() => {
+    renderer.renderFrame();
+  }, FRAME_MS);
+
+  process.on("SIGINT", () => {
+    clearInterval(renderLoop);
+    renderer.cleanup();
+    root.unmount();
+    bridge.shutdown();
+    process.exit(0);
+  });
 }, 0);
