@@ -68,6 +68,26 @@ export { Renderable, resetNodeIdCounter } from "./renderable.js";
 // RenderableTree
 export { RenderableTree } from "./renderable-tree.js";
 
+// TextRenderable
+export {
+  TextRenderable,
+  alignLine,
+  measureText,
+  resolveSpans,
+  truncateLine,
+  wrapText,
+} from "./text.js";
+export type {
+  AlignLineOptions,
+  StyledChar,
+  TextAlign,
+  TextMeasurement,
+  TextOptions,
+  TextOverflow,
+  TextSpan,
+  TextWrap,
+} from "./text.js";
+
 /**
  * Calls the native Rust `hello()` function and returns its string result.
  *
