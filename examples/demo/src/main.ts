@@ -243,7 +243,11 @@ if (nativeReady) {
   bridge.flushMutations();
   bridge.startRenderLoop();
 
+  // Keep the process alive — the render loop runs on a background Rust thread.
+  const keepAlive = setInterval(() => {}, 1 << 30);
+
   process.on("SIGINT", () => {
+    clearInterval(keepAlive);
     bridge.stopRenderLoop();
     bridge.shutdown();
     process.exit(0);
