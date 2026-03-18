@@ -29,6 +29,21 @@ const symbols = {
   register_event_callback: { args: [FFIType.function], returns: FFIType.void },
   get_layout: { args: [FFIType.u32, FFIType.ptr], returns: FFIType.void },
   get_all_layouts: { args: [FFIType.ptr, FFIType.u32], returns: FFIType.u32 },
+  // Input system
+  push_key_event: {
+    args: [FFIType.u32, FFIType.u8, FFIType.u8],
+    returns: FFIType.void,
+  },
+  push_mouse_event_with_hit_test: {
+    args: [FFIType.u8, FFIType.u16, FFIType.u16, FFIType.u16, FFIType.u16, FFIType.u8],
+    returns: FFIType.void,
+  },
+  focus: { args: [FFIType.u32], returns: FFIType.u8 },
+  blur: { args: [], returns: FFIType.u8 },
+  get_focused_node: { args: [], returns: FFIType.u32 },
+  set_focusable: { args: [FFIType.u32, FFIType.u8], returns: FFIType.void },
+  set_tab_index: { args: [FFIType.u32, FFIType.i32], returns: FFIType.void },
+  set_focus_trap: { args: [FFIType.u32, FFIType.u8], returns: FFIType.void },
 } as const;
 
 // -----------------------------------------------------------------------
@@ -171,6 +186,73 @@ export class Bridge {
   /** Register a listener for events from the Rust engine. */
   onEvents(listener: (events: KittyEvent[]) => void): void {
     this.eventListeners.push(listener);
+  }
+
+  // -----------------------------------------------------------------------
+  // Input system
+  // -----------------------------------------------------------------------
+
+  /** Push a keyboard event into the engine's event buffer. */
+  pushKeyEvent(keyCode: number, modifiers: number, eventType: number): void {
+    this.assertReady();
+    this.lib!.symbols.push_key_event(keyCode, modifiers, eventType);
+  }
+
+  /** Push a mouse event with automatic hit-testing. */
+  pushMouseEvent(
+    button: number,
+    cellX: number,
+    cellY: number,
+    pixelX: number,
+    pixelY: number,
+    modifiers: number,
+  ): void {
+    this.assertReady();
+    this.lib!.symbols.push_mouse_event_with_hit_test(
+      button,
+      cellX,
+      cellY,
+      pixelX,
+      pixelY,
+      modifiers,
+    );
+  }
+
+  /** Focus a node by its id. Returns true if the node was focused. */
+  focus(nodeId: number): boolean {
+    this.assertReady();
+    return this.lib!.symbols.focus(nodeId) !== 0;
+  }
+
+  /** Blur the currently focused node. Returns true if a node was blurred. */
+  blur(): boolean {
+    this.assertReady();
+    return this.lib!.symbols.blur() !== 0;
+  }
+
+  /** Get the id of the currently focused node, or null if none. */
+  getFocusedNode(): number | null {
+    this.assertReady();
+    const id = this.lib!.symbols.get_focused_node();
+    return id === 0xffffffff ? null : id;
+  }
+
+  /** Mark a node as focusable or not. */
+  setFocusable(nodeId: number, focusable: boolean): void {
+    this.assertReady();
+    this.lib!.symbols.set_focusable(nodeId, focusable ? 1 : 0);
+  }
+
+  /** Set the tab index for a node. */
+  setTabIndex(nodeId: number, tabIndex: number): void {
+    this.assertReady();
+    this.lib!.symbols.set_tab_index(nodeId, tabIndex);
+  }
+
+  /** Enable or disable focus trapping on a node. */
+  setFocusTrap(nodeId: number, enable: boolean): void {
+    this.assertReady();
+    this.lib!.symbols.set_focus_trap(nodeId, enable ? 1 : 0);
   }
 
   /** Decode a raw event buffer and dispatch to listeners. */

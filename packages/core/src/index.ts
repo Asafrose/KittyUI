@@ -10,7 +10,14 @@ export { nativeAvailable } from "./ffi.js";
 
 export { MutationEncoder } from "./mutation-encoder.js";
 export { EventDecoder } from "./event-decoder.js";
-export type { KittyEvent, KeyboardEvent, MouseEvent, ResizeEvent } from "./event-decoder.js";
+export type {
+  KittyEvent,
+  KeyboardEvent,
+  MouseEvent,
+  ResizeEvent,
+  FocusEvent as FfiFocusEvent,
+  BlurEvent as FfiBlurEvent,
+} from "./event-decoder.js";
 export { Bridge } from "./bridge.js";
 export type { InitResult, NodeLayout } from "./bridge.js";
 

@@ -83,6 +83,26 @@ function writeResizeEvent(
   };
 }
 
+function writeFocusEvent(nodeId: number) {
+  return (view: DataView, offset: number): number => {
+    view.setUint8(offset, 4);
+    offset += 1;
+    view.setUint32(offset, nodeId, true);
+    offset += 4;
+    return offset;
+  };
+}
+
+function writeBlurEvent(nodeId: number) {
+  return (view: DataView, offset: number): number => {
+    view.setUint8(offset, 5);
+    offset += 1;
+    view.setUint32(offset, nodeId, true);
+    offset += 4;
+    return offset;
+  };
+}
+
 describe("EventDecoder", () => {
   const decoder = new EventDecoder();
 
@@ -158,6 +178,59 @@ describe("EventDecoder", () => {
 
   test("stops on truncated keyboard event", () => {
     const buf = new Uint8Array([1, 65, 0, 0]);
+    const events = decoder.decode(buf);
+    expect(events).toHaveLength(0);
+  });
+
+  test("decodes a focus event", () => {
+    const data = buildEventBuffer([writeFocusEvent(42)]);
+    const events = decoder.decode(data);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe("focus");
+    if (events[0].type === "focus") {
+      expect(events[0].nodeId).toBe(42);
+    }
+  });
+
+  test("decodes a blur event", () => {
+    const data = buildEventBuffer([writeBlurEvent(7)]);
+    const events = decoder.decode(data);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe("blur");
+    if (events[0].type === "blur") {
+      expect(events[0].nodeId).toBe(7);
+    }
+  });
+
+  test("decodes focus and blur in sequence", () => {
+    const data = buildEventBuffer([writeFocusEvent(5), writeBlurEvent(5)]);
+    const events = decoder.decode(data);
+
+    expect(events).toHaveLength(2);
+    expect(events[0].type).toBe("focus");
+    expect(events[1].type).toBe("blur");
+  });
+
+  test("decodes mixed events including focus/blur", () => {
+    const data = buildEventBuffer([
+      writeKeyboardEvent(65, 0, 1),
+      writeFocusEvent(3),
+      writeMouseEvent(1, 5, 10, 40, 80, 2, 7),
+      writeBlurEvent(3),
+    ]);
+    const events = decoder.decode(data);
+
+    expect(events).toHaveLength(4);
+    expect(events[0].type).toBe("keyboard");
+    expect(events[1].type).toBe("focus");
+    expect(events[2].type).toBe("mouse");
+    expect(events[3].type).toBe("blur");
+  });
+
+  test("stops on truncated focus event", () => {
+    const buf = new Uint8Array([4, 42, 0]);
     const events = decoder.decode(buf);
     expect(events).toHaveLength(0);
   });
