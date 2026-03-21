@@ -4,7 +4,7 @@
  * Maps React's tree operations to mutations on a RenderableTree.
  */
 
-import { type BoxRenderable, type KittyProps, type TextRenderable, createRenderableForType } from "./renderables.js";
+import { type BoxRenderable, type ImageRenderable, type KittyProps, type TextRenderable, createRenderableForType } from "./renderables.js";
 import type { RenderableTree } from "@kittyui/core";
 
 // ---------------------------------------------------------------------------
@@ -23,7 +23,7 @@ export interface Container {
 }
 
 /** A host instance is one of our Renderable subclasses. */
-type Instance = BoxRenderable | TextRenderable;
+type Instance = BoxRenderable | ImageRenderable | TextRenderable;
 
 /** A text instance wraps a TextRenderable holding raw string content. */
 type TextInstance = TextRenderable;
