@@ -473,6 +473,14 @@ pub extern "C" fn render_frame() {
         if let Some(root_id) = state.root_node {
             if let Some(&layout_id) = state.node_map.get(&root_id) {
                 let _ = state.layout.compute(layout_id, state.cols, state.rows);
+
+                // Rebuild the hit-test grid after layout computation.
+                state.hit_tester.set_root(layout_id);
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let cols = state.cols as usize;
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let rows = state.rows as usize;
+                let _ = state.hit_tester.build_grid(&state.layout, cols, rows);
             }
         }
         state.dirty = false;
@@ -642,6 +650,57 @@ pub extern "C" fn push_mouse_event_with_hit_test(
 
         push_mouse_event(state, button, x, y, pixel_x, pixel_y, modifiers, node_id);
     });
+}
+
+/// Perform a hit test at cell coordinates `(x, y)`.
+///
+/// Writes the hit path (deepest node first, then ancestors up to root) as
+/// user-facing `u32` node IDs into `out_ptr`. Returns the number of IDs
+/// written. If nothing is hit, returns 0.
+///
+/// # Safety
+///
+/// `out_ptr` must point to a writable array of at least `max_depth` `u32` values.
+#[no_mangle]
+pub unsafe extern "C" fn hit_test(x: u16, y: u16, out_ptr: *mut u32, max_depth: u32) -> u32 {
+    if out_ptr.is_null() {
+        return 0;
+    }
+    with_engine(|state| {
+        let fx = f32::from(x);
+        let fy = f32::from(y);
+
+        let Some(root_id) = state.root_node else {
+            return 0;
+        };
+        let Some(&root_layout_id) = state.node_map.get(&root_id) else {
+            return 0;
+        };
+
+        state.hit_tester.set_root(root_layout_id);
+        let result = match state.hit_tester.hit_test(&state.layout, fx, fy) {
+            Ok(r) => r,
+            Err(_) => return 0,
+        };
+
+        if result.path.is_empty() {
+            return 0;
+        }
+
+        // Write path in reverse order (deepest first) for event bubbling.
+        let out = unsafe { std::slice::from_raw_parts_mut(out_ptr, max_depth as usize) };
+        let mut written: u32 = 0;
+        for &layout_id in result.path.iter().rev() {
+            if written >= max_depth {
+                break;
+            }
+            if let Some(uid) = state.user_id(layout_id) {
+                out[written as usize] = uid;
+                written += 1;
+            }
+        }
+        written
+    })
 }
 
 /// Focus a specific node by its user-facing id.
@@ -1393,6 +1452,124 @@ mod tests {
             assert_eq!(nid, 1);
         });
 
+        teardown();
+    }
+
+    // -- Hit test FFI tests --
+
+    #[test]
+    #[serial]
+    fn hit_test_returns_path_deepest_first() {
+        setup();
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(
+            1,
+            r#"{"width":80,"height":24,"flexDirection":"column"}"#,
+        ));
+        buf.extend(encode_create_node(2, r#"{"width":20,"height":10}"#));
+        buf.extend(encode_append_child(1, 2));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+        render_frame();
+
+        let mut out = [0_u32; 16];
+        let count = unsafe { hit_test(5, 5, out.as_mut_ptr(), 16) };
+        // Path should be [child=2, root=1] (deepest first).
+        assert_eq!(count, 2);
+        assert_eq!(out[0], 2);
+        assert_eq!(out[1], 1);
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn hit_test_no_root_returns_zero() {
+        setup();
+        let mut out = [0_u32; 16];
+        let count = unsafe { hit_test(5, 5, out.as_mut_ptr(), 16) };
+        assert_eq!(count, 0);
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn hit_test_miss_returns_zero() {
+        setup();
+        let buf = encode_create_node(1, r#"{"width":40,"height":12}"#);
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+        render_frame();
+
+        let mut out = [0_u32; 16];
+        // Click outside the root node bounds.
+        let count = unsafe { hit_test(50, 20, out.as_mut_ptr(), 16) };
+        assert_eq!(count, 0);
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn hit_test_null_ptr_returns_zero() {
+        setup();
+        let buf = encode_create_node(1, r#"{"width":80,"height":24}"#);
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+        render_frame();
+
+        let count = unsafe { hit_test(5, 5, std::ptr::null_mut(), 16) };
+        assert_eq!(count, 0);
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn hit_test_cache_invalidation_after_style_change() {
+        setup();
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(
+            1,
+            r#"{"width":80,"height":24,"flexDirection":"column"}"#,
+        ));
+        buf.extend(encode_create_node(2, r#"{"width":20,"height":10}"#));
+        buf.extend(encode_append_child(1, 2));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+        render_frame();
+
+        // First hit test: should hit node 2.
+        let mut out = [0_u32; 16];
+        let count = unsafe { hit_test(5, 5, out.as_mut_ptr(), 16) };
+        assert_eq!(count, 2);
+        assert_eq!(out[0], 2);
+
+        // Change node 2 style so it moves — make it very small.
+        let update = encode_set_style(2, r#"{"width":2,"height":2}"#);
+        unsafe { apply_mutations(update.as_ptr(), update.len() as u32) };
+        render_frame(); // Rebuilds grid.
+
+        // Now (5,5) should miss node 2 (it's only 2x2) and hit root.
+        let count2 = unsafe { hit_test(5, 5, out.as_mut_ptr(), 16) };
+        assert_eq!(count2, 1);
+        assert_eq!(out[0], 1);
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn render_frame_rebuilds_hit_grid() {
+        setup();
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(
+            1,
+            r#"{"width":80,"height":24,"flexDirection":"column"}"#,
+        ));
+        buf.extend(encode_create_node(2, r#"{"width":20,"height":10}"#));
+        buf.extend(encode_append_child(1, 2));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+        render_frame();
+
+        // The grid should be built; a hit_test at (5,5) should use the
+        // cached grid and return the correct result.
+        let mut out = [0_u32; 16];
+        let count = unsafe { hit_test(5, 5, out.as_mut_ptr(), 16) };
+        assert!(count > 0, "hit grid should have been built by render_frame");
+        assert_eq!(out[0], 2);
         teardown();
     }
 }

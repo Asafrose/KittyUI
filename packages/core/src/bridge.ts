@@ -38,6 +38,10 @@ const symbols = {
     args: [FFIType.u8, FFIType.u16, FFIType.u16, FFIType.u16, FFIType.u16, FFIType.u8],
     returns: FFIType.void,
   },
+  hit_test: {
+    args: [FFIType.u16, FFIType.u16, FFIType.ptr, FFIType.u32],
+    returns: FFIType.u32,
+  },
   focus: { args: [FFIType.u32], returns: FFIType.u8 },
   blur: { args: [], returns: FFIType.u8 },
   get_focused_node: { args: [], returns: FFIType.u32 },
@@ -216,6 +220,14 @@ export class Bridge {
       pixelY,
       modifiers,
     );
+  }
+
+  /** Perform a hit test at cell coordinates. Returns node IDs from deepest to root. */
+  hitTest(x: number, y: number, maxDepth = 64): number[] {
+    this.assertReady();
+    const buf = new Uint32Array(maxDepth);
+    const count = this.lib!.symbols.hit_test(x, y, buf, maxDepth);
+    return Array.from(buf.subarray(0, count));
   }
 
   /** Focus a node by its id. Returns true if the node was focused. */
