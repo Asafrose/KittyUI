@@ -1,9 +1,9 @@
 /**
  * KittyUI Demo — a mini dashboard layout showcasing boxes, text, colors,
- * borders, and nested flexbox layouts.
+ * borders, and nested flexbox layouts with keyboard navigation.
  */
 
-import type React from "react";
+import React, { useState } from "react";
 
 // ---------------------------------------------------------------------------
 // Header bar
@@ -32,6 +32,8 @@ const Header = (): React.JSX.Element => (
 // Sidebar navigation
 // ---------------------------------------------------------------------------
 
+const SIDEBAR_ITEMS = ["Overview", "Metrics", "Logs", "Settings"];
+
 const SidebarItem = ({ label, active }: { label: string; active?: boolean }): React.JSX.Element => (
   <box
     style={{
@@ -47,7 +49,7 @@ const SidebarItem = ({ label, active }: { label: string; active?: boolean }): Re
   </box>
 );
 
-const Sidebar = (): React.JSX.Element => (
+const Sidebar = ({ activeIndex }: { activeIndex: number }): React.JSX.Element => (
   <box
     style={{
       backgroundColor: "#0f172a",
@@ -60,10 +62,9 @@ const Sidebar = (): React.JSX.Element => (
     <text style={{ color: "#64748b", fontWeight: "bold", padding: [0, 1] }}>
       NAVIGATION
     </text>
-    <SidebarItem label="Overview" active />
-    <SidebarItem label="Metrics" />
-    <SidebarItem label="Logs" />
-    <SidebarItem label="Settings" />
+    {SIDEBAR_ITEMS.map((label, i) => (
+      <SidebarItem key={label} label={label} active={i === activeIndex} />
+    ))}
   </box>
 );
 
@@ -147,7 +148,7 @@ const ActivityLog = (): React.JSX.Element => (
 // Footer
 // ---------------------------------------------------------------------------
 
-const Footer = (): React.JSX.Element => (
+const Footer = ({ hint }: { hint: string }): React.JSX.Element => (
   <box
     style={{
       backgroundColor: "#1e293b",
@@ -158,7 +159,7 @@ const Footer = (): React.JSX.Element => (
       padding: [0, 1],
     }}
   >
-    <text style={{ color: "#64748b" }}>KittyUI v0.1.0</text>
+    <text style={{ color: "#64748b" }}>{hint}</text>
     <text style={{ color: "#22c55e" }}>Connected</text>
   </box>
 );
@@ -175,16 +176,20 @@ const MainContent = (): React.JSX.Element => (
 );
 
 // ---------------------------------------------------------------------------
-// App root
+// App root — stateful, receives keyboard events via props
 // ---------------------------------------------------------------------------
 
-export const App = (): React.JSX.Element => (
+export interface AppProps {
+  activeIndex?: number;
+}
+
+export const App = ({ activeIndex = 0 }: AppProps): React.JSX.Element => (
   <box style={{ flexDirection: "column", width: "100%", height: "100%" }}>
     <Header />
     <box style={{ flexDirection: "row", flexGrow: 1 }}>
-      <Sidebar />
+      <Sidebar activeIndex={activeIndex} />
       <MainContent />
     </box>
-    <Footer />
+    <Footer hint="↑/↓ navigate  q quit" />
   </box>
 );

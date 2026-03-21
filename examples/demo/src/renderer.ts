@@ -93,6 +93,7 @@ export class DemoRenderer {
   private debug: boolean;
   private cols: number;
   private rows: number;
+  private lastFrame: string = "";
 
   constructor(opts: RendererOptions) {
     this.tree = opts.tree;
@@ -113,6 +114,7 @@ export class DemoRenderer {
     process.on("resize", () => {
       this.cols = process.stdout.columns || 80;
       this.rows = process.stdout.rows || 24;
+      this.lastFrame = ""; // force full repaint on resize
       if (this.debug) {
         this.log(`Resize: ${this.cols}x${this.rows}`);
       }
@@ -141,16 +143,25 @@ export class DemoRenderer {
       this.logLayouts(layouts);
     }
 
-    // Paint
-    let buf = this.debug ? "" : clearScreen;
+    // Paint — build frame buffer, then write in one shot
+    let frame = "";
     const rootId = this.tree.root;
     if (rootId !== undefined) {
-      buf += this.paintNode(rootId, 0, 0, {});
+      frame = this.paintNode(rootId, 0, 0, {});
     }
-    buf += resetStyle;
-    if (!this.debug) {
-      process.stdout.write(buf);
+
+    if (this.debug) {
+      return;
     }
+
+    // Skip write if frame content hasn't changed (avoids unnecessary repaints)
+    if (frame === this.lastFrame) {
+      return;
+    }
+    this.lastFrame = frame;
+
+    // Cursor home + paint + reset — single write to avoid flicker
+    process.stdout.write(`${ESC}H` + frame + resetStyle);
   }
 
   /** Log all computed layouts to stderr. */
