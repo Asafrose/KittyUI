@@ -5,9 +5,12 @@
 //! state (layout tree, text content, event queue, render loop).
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
+use crate::ansi::{self, Color, Style as CellStyle};
+use crate::cell::DoubleBuffer;
 use crate::focus::{FocusManager, FocusMeta};
 use crate::hit_test::HitTester;
 use crate::layout::{LayoutNodeId, LayoutTree, NodeStyle};
@@ -32,6 +35,19 @@ const EVENT_MOUSE: u8 = 2;
 const EVENT_RESIZE: u8 = 3;
 const EVENT_FOCUS: u8 = 4;
 const EVENT_BLUR: u8 = 5;
+
+// ---------------------------------------------------------------------------
+// Visual style — bg/fg colors per node (separate from layout style)
+// ---------------------------------------------------------------------------
+
+/// Visual (non-layout) style properties for a node.
+#[derive(Clone, Debug, Default)]
+struct NodeVisualStyle {
+    /// Background color.
+    bg: Option<Color>,
+    /// Foreground (text) color.
+    fg: Option<Color>,
+}
 
 // ---------------------------------------------------------------------------
 // Global engine state
@@ -61,6 +77,12 @@ struct EngineState {
     hit_tester: HitTester,
     /// Reverse map from layout node ids to user-facing u32 ids.
     reverse_node_map: HashMap<LayoutNodeId, u32>,
+    /// Double buffer for efficient terminal rendering.
+    double_buf: DoubleBuffer,
+    /// Visual (non-layout) style per node.
+    visual_styles: HashMap<u32, NodeVisualStyle>,
+    /// Output writer — `None` means write to real stdout.
+    output: Option<Vec<u8>>,
 }
 
 impl EngineState {
@@ -78,12 +100,35 @@ impl EngineState {
             focus: FocusManager::new(),
             hit_tester: HitTester::new(),
             reverse_node_map: HashMap::new(),
+            double_buf: DoubleBuffer::new(80, 24),
+            visual_styles: HashMap::new(),
+            output: None,
         }
     }
 
     /// Look up the user-facing u32 id for a layout node id.
     fn user_id(&self, layout_id: LayoutNodeId) -> Option<u32> {
         self.reverse_node_map.get(&layout_id).copied()
+    }
+
+    /// Write bytes to the configured output target.
+    fn write_output(&mut self, data: &[u8]) {
+        if let Some(ref mut buf) = self.output {
+            buf.extend_from_slice(data);
+        } else {
+            let _ = std::io::stdout().lock().write_all(data);
+            let _ = std::io::stdout().lock().flush();
+        }
+    }
+
+    /// Ensure the double buffer matches the current cols/rows dimensions.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn ensure_buffer_size(&mut self) {
+        let w = self.cols as usize;
+        let h = self.rows as usize;
+        if self.double_buf.width() != w || self.double_buf.height() != h {
+            self.double_buf.resize(w, h);
+        }
     }
 }
 
@@ -132,12 +177,20 @@ pub struct InitResult {
 
 /// Initialise the engine.  Writes capabilities into `out_ptr`.
 ///
+/// Enters the alternate screen and hides the cursor for clean terminal
+/// rendering.
+///
 /// # Safety
 ///
 /// - Must be called exactly once before any other FFI function.
 /// - `out_ptr` must point to a writable `InitResult`.
 #[no_mangle]
 pub unsafe extern "C" fn init(out_ptr: *mut InitResult) {
+    // Enter alternate screen and hide cursor.
+    let _ = crate::screen::enter();
+    let _ = std::io::stdout().lock().write_all(&ansi::cursor_hide());
+    let _ = std::io::stdout().lock().flush();
+
     let mut guard = ENGINE
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -155,6 +208,8 @@ pub unsafe extern "C" fn init(out_ptr: *mut InitResult) {
 }
 
 /// Shut down the engine and release all resources.
+///
+/// Shows the cursor and exits the alternate screen.
 #[no_mangle]
 pub extern "C" fn shutdown() {
     RENDER_LOOP_RUNNING.store(false, Ordering::SeqCst);
@@ -162,6 +217,11 @@ pub extern "C" fn shutdown() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     *guard = None;
+
+    // Show cursor and exit alternate screen.
+    let _ = std::io::stdout().lock().write_all(&ansi::cursor_show());
+    let _ = std::io::stdout().lock().flush();
+    let _ = crate::screen::exit();
 }
 
 // ---------------------------------------------------------------------------
@@ -292,6 +352,40 @@ fn parse_style_json(json: &[u8]) -> NodeStyle {
     style
 }
 
+/// Parse a hex color string (#RGB or #RRGGBB) into a `Color`.
+fn parse_hex_color(hex: &str) -> Option<Color> {
+    let hex = hex.strip_prefix('#')?;
+    match hex.len() {
+        3 => {
+            let r = u8::from_str_radix(&hex[0..1], 16).ok()?;
+            let g = u8::from_str_radix(&hex[1..2], 16).ok()?;
+            let b = u8::from_str_radix(&hex[2..3], 16).ok()?;
+            // Expand 4-bit to 8-bit: 0xA -> 0xAA
+            Some(Color::Rgb(r << 4 | r, g << 4 | g, b << 4 | b))
+        }
+        6 => {
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            Some(Color::Rgb(r, g, b))
+        }
+        _ => None,
+    }
+}
+
+/// Parse a JSON style blob and also extract visual style (bg/fg colors).
+fn parse_visual_style_json(json: &[u8]) -> NodeVisualStyle {
+    let s = std::str::from_utf8(json).unwrap_or("{}");
+    let mut vs = NodeVisualStyle::default();
+    if let Some(hex) = json_extract_str(s, "backgroundColor") {
+        vs.bg = parse_hex_color(hex);
+    }
+    if let Some(hex) = json_extract_str(s, "color") {
+        vs.fg = parse_hex_color(hex);
+    }
+    vs
+}
+
 /// Extract a float value for a given key from a JSON string (best-effort).
 fn json_extract_f32(s: &str, key: &str) -> Option<f32> {
     let pattern = format!("\"{key}\"");
@@ -347,9 +441,11 @@ fn mut_create_node(reader: &mut MutationReader<'_>, state: &mut EngineState) -> 
         return false;
     };
     let style = parse_style_json(json_bytes);
+    let vs = parse_visual_style_json(json_bytes);
     if let Ok(layout_id) = state.layout.add_leaf(&style) {
         state.node_map.insert(node_id, layout_id);
         state.reverse_node_map.insert(layout_id, node_id);
+        state.visual_styles.insert(node_id, vs);
         if state.root_node.is_none() {
             state.root_node = Some(node_id);
         }
@@ -368,6 +464,7 @@ fn mut_remove_node(reader: &mut MutationReader<'_>, state: &mut EngineState) -> 
         let _ = state.layout.remove(layout_id);
     }
     state.text_content.remove(&node_id);
+    state.visual_styles.remove(&node_id);
     true
 }
 
@@ -418,9 +515,11 @@ fn mut_set_style(reader: &mut MutationReader<'_>, state: &mut EngineState) -> bo
         return false;
     };
     let style = parse_style_json(json_bytes);
+    let vs = parse_visual_style_json(json_bytes);
     if let Some(&layout_id) = state.node_map.get(&node_id) {
         let _ = state.layout.set_style(layout_id, &style);
     }
+    state.visual_styles.insert(node_id, vs);
     true
 }
 
@@ -466,17 +565,119 @@ pub unsafe extern "C" fn apply_mutations(buffer_ptr: *const u8, buffer_len: u32)
 // Rendering
 // ---------------------------------------------------------------------------
 
-/// Run the full render pipeline: layout then flush events to JS.
+/// Walk the layout tree recursively and paint each node into the back buffer.
+///
+/// `parent_x` / `parent_y` are the absolute position of the parent so that
+/// each child's relative layout coordinates can be converted to absolute
+/// positions in the cell buffer.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn paint_node(
+    state: &EngineState,
+    back: &mut crate::cell::CellBuffer,
+    node_id: u32,
+    parent_x: f32,
+    parent_y: f32,
+) {
+    let Some(&layout_id) = state.node_map.get(&node_id) else {
+        return;
+    };
+    let Ok(cl) = state.layout.get_layout(layout_id) else {
+        return;
+    };
+
+    let abs_x = parent_x + cl.x;
+    let abs_y = parent_y + cl.y;
+    let x0 = abs_x as usize;
+    let y0 = abs_y as usize;
+    let w = cl.width as usize;
+    let h = cl.height as usize;
+
+    // Build cell style from visual style.
+    let vs = state.visual_styles.get(&node_id);
+    let cell_style = CellStyle {
+        bg: vs.and_then(|v| v.bg),
+        fg: vs.and_then(|v| v.fg),
+        ..CellStyle::new()
+    };
+
+    // Paint background.
+    for row in y0..y0 + h {
+        for col in x0..x0 + w {
+            if let Some(cell) = back.get_mut(row, col) {
+                cell.ch = ' ';
+                cell.style = cell_style;
+            }
+        }
+    }
+
+    // Paint text content.
+    if let Some(text) = state.text_content.get(&node_id) {
+        if !text.is_empty() {
+            back.put_str(y0, x0, text, cell_style);
+        }
+    }
+
+    // Recurse into children.
+    if let Ok(children) = state.layout.children(layout_id) {
+        for child_lid in children {
+            if let Some(&child_uid) = state.reverse_node_map.get(&child_lid) {
+                paint_node(state, back, child_uid, abs_x, abs_y);
+            }
+        }
+    }
+}
+
+/// Run the full render pipeline: layout, paint, diff, output, flush events.
 #[no_mangle]
 pub extern "C" fn render_frame() {
     with_engine(|state| {
+        // 1. Compute layout.
         if let Some(root_id) = state.root_node {
             if let Some(&layout_id) = state.node_map.get(&root_id) {
                 let _ = state.layout.compute(layout_id, state.cols, state.rows);
             }
         }
+
+        // 2. Paint cells and diff only when dirty.
+        if state.dirty {
+            state.ensure_buffer_size();
+
+            // Clear back buffer.
+            state.double_buf.back_mut().clear();
+
+            // Walk all nodes and paint them.
+            if let Some(root_id) = state.root_node {
+                // We need to pass state immutably while mutating the buffer.
+                // Temporarily take the back buffer out so we can pass state
+                // to `paint_node` while mutating the buffer.
+                let mut back_buf = {
+                    let back = state.double_buf.back_mut();
+                    let w = back.width();
+                    let h = back.height();
+                    let mut tmp = crate::cell::CellBuffer::new(w, h);
+                    std::mem::swap(back, &mut tmp);
+                    tmp
+                };
+
+                paint_node(state, &mut back_buf, root_id, 0.0, 0.0);
+
+                // Swap the painted buffer back.
+                std::mem::swap(state.double_buf.back_mut(), &mut back_buf);
+            }
+
+            // Diff and output.
+            let diff = state.double_buf.diff();
+            if !diff.is_empty() {
+                state.write_output(&diff);
+            }
+
+            // Swap buffers.
+            state.double_buf.swap_no_clear();
+        }
+
         state.dirty = false;
 
+        // 3. Flush events to JS.
         if !state.event_buffer.is_empty() {
             if let Some(cb) = state.event_callback {
                 let ptr = state.event_buffer.as_ptr();
@@ -872,11 +1073,36 @@ mod tests {
     }
 
     fn setup() {
-        unsafe { init(std::ptr::null_mut()) };
+        // For tests, directly create engine state to avoid terminal side effects.
+        let mut guard = ENGINE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut state = EngineState::new();
+        // Route output to a Vec<u8> so tests don't write to the real terminal.
+        state.output = Some(Vec::new());
+        *guard = Some(state);
     }
 
     fn teardown() {
-        shutdown();
+        RENDER_LOOP_RUNNING.store(false, Ordering::SeqCst);
+        let mut guard = ENGINE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *guard = None;
+    }
+
+    /// Get the captured output bytes from the test engine.
+    fn get_output() -> Vec<u8> {
+        with_engine(|state| state.output.as_ref().unwrap_or(&Vec::new()).clone())
+    }
+
+    /// Clear the captured output.
+    fn clear_output() {
+        with_engine(|state| {
+            if let Some(ref mut buf) = state.output {
+                buf.clear();
+            }
+        });
     }
 
     #[test]
@@ -1391,6 +1617,181 @@ mod tests {
             assert_eq!(state.event_buffer[0], EVENT_FOCUS);
             let nid = u32::from_le_bytes(state.event_buffer[1..5].try_into().unwrap());
             assert_eq!(nid, 1);
+        });
+
+        teardown();
+    }
+
+    // -- Render pipeline tests --
+
+    #[test]
+    #[serial]
+    fn render_frame_produces_ansi_output_with_styles() {
+        setup();
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(
+            1,
+            r#"{"width":80,"height":24,"flexDirection":"column"}"#,
+        ));
+        buf.extend(encode_create_node(
+            2,
+            r##"{"width":10,"height":3,"backgroundColor":"#FF0000","color":"#00FF00"}"##,
+        ));
+        buf.extend(encode_append_child(1, 2));
+        buf.extend(encode_set_text(2, "Hi"));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        render_frame();
+
+        let output = get_output();
+        let output_str = String::from_utf8_lossy(&output);
+        // Should contain ANSI escape sequences for the red background.
+        assert!(
+            !output.is_empty(),
+            "render_frame should produce output when nodes have styles"
+        );
+        // Should contain the cursor-positioning (CUP) sequence.
+        assert!(
+            output_str.contains('H'),
+            "output should contain CUP sequence"
+        );
+        // Should contain the text content.
+        assert!(output_str.contains("Hi"), "output should contain text 'Hi'");
+        // Should contain RGB color codes for red bg (48;2;255;0;0).
+        assert!(
+            output_str.contains("48;2;255;0;0"),
+            "output should contain red background SGR: {output_str}"
+        );
+        // Should contain RGB color codes for green fg (38;2;0;255;0).
+        assert!(
+            output_str.contains("38;2;0;255;0"),
+            "output should contain green foreground SGR: {output_str}"
+        );
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn unchanged_frames_produce_no_diff_after_swap() {
+        setup();
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(
+            1,
+            r#"{"width":80,"height":24,"flexDirection":"column"}"#,
+        ));
+        buf.extend(encode_create_node(
+            2,
+            r##"{"width":5,"height":2,"backgroundColor":"#0000FF"}"##,
+        ));
+        buf.extend(encode_append_child(1, 2));
+        buf.extend(encode_set_text(2, "AB"));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        // First render — should produce output.
+        render_frame();
+        let first_output = get_output();
+        assert!(
+            !first_output.is_empty(),
+            "first render should produce output"
+        );
+
+        // Clear captured output.
+        clear_output();
+
+        // Mark dirty again with the exact same content.
+        request_render();
+        render_frame();
+
+        let second_output = get_output();
+        // After swap_no_clear, the front and back are identical, so diff should
+        // be empty (no ANSI output needed).
+        assert!(
+            second_output.is_empty(),
+            "second render of unchanged content should produce no output, got {} bytes",
+            second_output.len()
+        );
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn hex_color_parsing_rrggbb() {
+        let color = parse_hex_color("#FF8800");
+        assert_eq!(color, Some(Color::Rgb(255, 136, 0)));
+    }
+
+    #[test]
+    #[serial]
+    fn hex_color_parsing_rgb_short() {
+        let color = parse_hex_color("#F80");
+        assert_eq!(color, Some(Color::Rgb(0xFF, 0x88, 0x00)));
+    }
+
+    #[test]
+    #[serial]
+    fn hex_color_parsing_invalid() {
+        assert_eq!(parse_hex_color("not-a-color"), None);
+        assert_eq!(parse_hex_color("#GG0000"), None);
+        assert_eq!(parse_hex_color("#1234"), None);
+    }
+
+    #[test]
+    #[serial]
+    fn render_frame_skipped_when_not_dirty() {
+        setup();
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(
+            1,
+            r##"{"width":80,"height":24,"backgroundColor":"#FF0000"}"##,
+        ));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        // First render (dirty from mutation).
+        render_frame();
+        clear_output();
+
+        // render_frame without re-dirtying — dirty was cleared.
+        render_frame();
+        let output = get_output();
+        assert!(
+            output.is_empty(),
+            "render_frame should skip painting when not dirty"
+        );
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn visual_style_parsed_from_json() {
+        let vs = parse_visual_style_json(
+            br##"{"backgroundColor":"#112233","color":"#AABBCC","width":10}"##,
+        );
+        assert_eq!(vs.bg, Some(Color::Rgb(0x11, 0x22, 0x33)));
+        assert_eq!(vs.fg, Some(Color::Rgb(0xAA, 0xBB, 0xCC)));
+    }
+
+    #[test]
+    #[serial]
+    fn double_buffer_resizes_on_cols_rows_change() {
+        setup();
+        let buf = encode_create_node(1, r#"{"width":80,"height":24}"#);
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        // Change terminal size.
+        with_engine(|state| {
+            state.cols = 40.0;
+            state.rows = 10.0;
+            state.dirty = true;
+        });
+
+        render_frame();
+
+        with_engine(|state| {
+            assert_eq!(state.double_buf.width(), 40);
+            assert_eq!(state.double_buf.height(), 10);
         });
 
         teardown();
