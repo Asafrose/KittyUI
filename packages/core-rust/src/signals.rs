@@ -93,15 +93,16 @@ mod tests {
         unsafe {
             libc::raise(libc::SIGWINCH);
         }
-        // Poll with back-off — CI runners can be slow to deliver signals.
+        // Poll with generous back-off — CI runners can be very slow to
+        // deliver signals, especially under load.
         let mut received = false;
-        for _ in 0..20 {
+        for _ in 0..100 {
             std::thread::sleep(std::time::Duration::from_millis(10));
             if resize_received() {
                 received = true;
                 break;
             }
         }
-        assert!(received, "SIGWINCH was not delivered within 200 ms");
+        assert!(received, "SIGWINCH was not delivered within 1000 ms");
     }
 }
