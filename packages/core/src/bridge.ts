@@ -29,6 +29,11 @@ const symbols = {
   register_event_callback: { args: [FFIType.function], returns: FFIType.void },
   get_layout: { args: [FFIType.u32, FFIType.ptr], returns: FFIType.void },
   get_all_layouts: { args: [FFIType.ptr, FFIType.u32], returns: FFIType.u32 },
+  // Hit testing
+  hit_test: {
+    args: [FFIType.u16, FFIType.u16, FFIType.ptr, FFIType.u32],
+    returns: FFIType.u32,
+  },
   // Input system
   push_key_event: {
     args: [FFIType.u32, FFIType.u8, FFIType.u8],
@@ -179,6 +184,18 @@ export class Bridge {
         width: buf[base + 3],
         height: buf[base + 4],
       });
+    }
+    return result;
+  }
+
+  /** Hit test at cell coordinates (x, y). Returns node IDs from deepest to root. */
+  hitTest(x: number, y: number, maxDepth = 64): number[] {
+    this.assertReady();
+    const buf = new Uint32Array(maxDepth);
+    const count = this.lib!.symbols.hit_test(x, y, ptr(buf), maxDepth);
+    const result: number[] = [];
+    for (let i = 0; i < count; i++) {
+      result.push(buf[i]);
     }
     return result;
   }
