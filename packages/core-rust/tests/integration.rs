@@ -148,8 +148,16 @@ fn full_pipeline_create_render_get_layout() {
     unsafe { get_layout(2, out.as_mut_ptr()) };
     assert!((out[0] - 0.0).abs() < f32::EPSILON, "x should be 0");
     assert!((out[1] - 0.0).abs() < f32::EPSILON, "y should be 0");
-    assert!((out[2] - 40.0).abs() < f32::EPSILON, "width should be 40, got {}", out[2]);
-    assert!((out[3] - 10.0).abs() < f32::EPSILON, "height should be 10, got {}", out[3]);
+    assert!(
+        (out[2] - 40.0).abs() < f32::EPSILON,
+        "width should be 40, got {}",
+        out[2]
+    );
+    assert!(
+        (out[3] - 10.0).abs() < f32::EPSILON,
+        "height should be 10, got {}",
+        out[3]
+    );
 
     teardown();
 }
@@ -182,10 +190,23 @@ fn column_layout_stacks_children_vertically() {
     unsafe { get_layout(3, out3.as_mut_ptr()) };
 
     // Child 2 at y=0, child 3 at y=6
-    assert!((out2[1] - 0.0).abs() < f32::EPSILON, "child 2 y should be 0");
-    assert!((out3[1] - 6.0).abs() < f32::EPSILON, "child 3 y should be 6, got {}", out3[1]);
-    assert!((out2[3] - 6.0).abs() < f32::EPSILON, "child 2 height should be 6");
-    assert!((out3[3] - 8.0).abs() < f32::EPSILON, "child 3 height should be 8");
+    assert!(
+        (out2[1] - 0.0).abs() < f32::EPSILON,
+        "child 2 y should be 0"
+    );
+    assert!(
+        (out3[1] - 6.0).abs() < f32::EPSILON,
+        "child 3 y should be 6, got {}",
+        out3[1]
+    );
+    assert!(
+        (out2[3] - 6.0).abs() < f32::EPSILON,
+        "child 2 height should be 6"
+    );
+    assert!(
+        (out3[3] - 8.0).abs() < f32::EPSILON,
+        "child 3 height should be 8"
+    );
 
     teardown();
 }
@@ -211,8 +232,15 @@ fn row_layout_stacks_children_horizontally() {
     unsafe { get_layout(2, out2.as_mut_ptr()) };
     unsafe { get_layout(3, out3.as_mut_ptr()) };
 
-    assert!((out2[0] - 0.0).abs() < f32::EPSILON, "child 2 x should be 0");
-    assert!((out3[0] - 20.0).abs() < f32::EPSILON, "child 3 x should be 20, got {}", out3[0]);
+    assert!(
+        (out2[0] - 0.0).abs() < f32::EPSILON,
+        "child 2 x should be 0"
+    );
+    assert!(
+        (out3[0] - 20.0).abs() < f32::EPSILON,
+        "child 3 x should be 20, got {}",
+        out3[0]
+    );
 
     teardown();
 }
@@ -247,7 +275,11 @@ fn nested_flexbox_layout() {
 
     // Node 3 at x=0, node 4 at x=30 (row inside column)
     assert!((out3[0] - 0.0).abs() < f32::EPSILON);
-    assert!((out4[0] - 30.0).abs() < f32::EPSILON, "node 4 x should be 30, got {}", out4[0]);
+    assert!(
+        (out4[0] - 30.0).abs() < f32::EPSILON,
+        "node 4 x should be 30, got {}",
+        out4[0]
+    );
 
     teardown();
 }
@@ -286,7 +318,11 @@ fn flex_grow_equal_distribution() {
         "child 3 height should be 12, got {}",
         out3[3]
     );
-    assert!((out3[1] - 12.0).abs() < 0.01, "child 3 y should be 12, got {}", out3[1]);
+    assert!(
+        (out3[1] - 12.0).abs() < 0.01,
+        "child 3 y should be 12, got {}",
+        out3[1]
+    );
 
     teardown();
 }
@@ -449,10 +485,7 @@ fn multiple_mutation_batches() {
     setup();
 
     // First batch: create root
-    let buf1 = encode_create_node(
-        1,
-        r#"{"width":80,"height":24,"flexDirection":"column"}"#,
-    );
+    let buf1 = encode_create_node(1, r#"{"width":80,"height":24,"flexDirection":"column"}"#);
     unsafe { apply_mutations(buf1.as_ptr(), buf1.len() as u32) };
 
     // Second batch: add children
@@ -534,8 +567,14 @@ fn stress_test_500_nodes() {
     // Verify root layout
     let mut root_out = [0.0_f32; 4];
     unsafe { get_layout(1, root_out.as_mut_ptr()) };
-    assert!((root_out[2] - 80.0).abs() < f32::EPSILON, "root width should be 80");
-    assert!((root_out[3] - 24.0).abs() < f32::EPSILON, "root height should be 24");
+    assert!(
+        (root_out[2] - 80.0).abs() < f32::EPSILON,
+        "root width should be 80"
+    );
+    assert!(
+        (root_out[3] - 24.0).abs() < f32::EPSILON,
+        "root height should be 24"
+    );
 
     teardown();
 }
@@ -684,7 +723,11 @@ fn focus_blur_events_via_ffi() {
 
     let result = unsafe { blur() };
     assert_eq!(result, 1, "blur should succeed");
-    assert_eq!(unsafe { get_focused_node() }, u32::MAX, "no node should be focused");
+    assert_eq!(
+        unsafe { get_focused_node() },
+        u32::MAX,
+        "no node should be focused"
+    );
 
     teardown();
 }
@@ -878,8 +921,14 @@ fn insert_before_adds_child_to_tree() {
     unsafe { get_layout(2, out2.as_mut_ptr()) };
     unsafe { get_layout(3, out3.as_mut_ptr()) };
 
-    assert!((out2[3] - 5.0).abs() < f32::EPSILON, "node 2 height should be 5");
-    assert!((out3[3] - 7.0).abs() < f32::EPSILON, "node 3 height should be 7");
+    assert!(
+        (out2[3] - 5.0).abs() < f32::EPSILON,
+        "node 2 height should be 5"
+    );
+    assert!(
+        (out3[3] - 7.0).abs() < f32::EPSILON,
+        "node 3 height should be 7"
+    );
 
     teardown();
 }
