@@ -79,7 +79,7 @@ export const useFocus = (
   // Register as focusable on mount and listen for focus/blur events.
   useEffect(() => {
     const nodeId = ref.current?.nodeId;
-    if (nodeId == null) return;
+    if (nodeId === undefined) return;
 
     bridge.setFocusable(nodeId, true);
 
@@ -98,7 +98,7 @@ export const useFocus = (
 
     return () => {
       active = false;
-      if (ref.current?.nodeId != null) {
+      if (ref.current?.nodeId !== undefined) {
         bridge.setFocusable(ref.current.nodeId, false);
       }
     };
@@ -107,7 +107,7 @@ export const useFocus = (
 
   const focus = useCallback(() => {
     const nodeId = ref.current?.nodeId;
-    if (nodeId != null) {
+    if (nodeId !== undefined) {
       bridge.focus(nodeId);
     }
   }, [bridge, ref]);
@@ -160,7 +160,7 @@ export const useKeyboard = (
             // The focused node check allows components using useFocus
             // to scope keyboard events to their focus state.
             const focused = bridge.getFocusedNode();
-            if (focused != null) {
+            if (focused !== null) {
               handlerRef.current(event);
             }
           }
@@ -202,7 +202,7 @@ export const useMouse = (
 
   useEffect(() => {
     const nodeId = ref.current?.nodeId;
-    if (nodeId == null) return;
+    if (nodeId === undefined) return;
 
     let active = true;
     const listener = (events: KittyEvent[]): void => {
