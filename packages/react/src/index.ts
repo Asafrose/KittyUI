@@ -8,6 +8,17 @@ export { BoxRenderable, ImageRenderable, TextRenderable, createRenderableForType
 export { createApp, type AppHandle, type AppOptions } from "./app.js";
 export { TerminalContext, TerminalProvider, type TerminalContextValue } from "./context.js";
 
+// Hooks
+export {
+  useTerminal,
+  useFocus,
+  useKeyboard,
+  useMouse,
+  type UseFocusResult,
+  type UseKeyboardOptions,
+  type UseMouseResult,
+} from "./hooks.js";
+
 // JSX prop and event types
 export type {
   BoxProps,
