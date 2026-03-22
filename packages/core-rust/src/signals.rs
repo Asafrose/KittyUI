@@ -84,25 +84,35 @@ mod tests {
         assert!(register().is_ok());
     }
 
+    /// Verify that `SIGWINCH` delivery sets the resize flag.
+    ///
+    /// This test sends a real signal and polls for the flag.  Because Cargo
+    /// runs tests in parallel and other tests (e.g. `ffi_bridge` init/shutdown)
+    /// can call `register()` and `reset_flags()` concurrently, we retry the
+    /// whole raise-and-poll cycle to tolerate a stolen flag.
     #[test]
     fn sigwinch_sets_resize_flag() {
-        reset_flags();
         register().unwrap();
 
-        // Send SIGWINCH to ourselves.
-        unsafe {
-            libc::raise(libc::SIGWINCH);
-        }
-        // Poll with generous back-off — CI runners can be very slow to
-        // deliver signals, especially under load.
         let mut received = false;
-        for _ in 0..100 {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-            if resize_received() {
-                received = true;
+        // Outer retry: if another parallel test consumed our flag, try again.
+        for _attempt in 0..5 {
+            reset_flags();
+            unsafe {
+                libc::raise(libc::SIGWINCH);
+            }
+            // Inner poll: wait for signal delivery.
+            for _ in 0..50 {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                if resize_received() {
+                    received = true;
+                    break;
+                }
+            }
+            if received {
                 break;
             }
         }
-        assert!(received, "SIGWINCH was not delivered within 1000 ms");
+        assert!(received, "SIGWINCH was not delivered after 5 attempts");
     }
 }
