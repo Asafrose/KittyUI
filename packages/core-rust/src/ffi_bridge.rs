@@ -631,10 +631,18 @@ fn paint_node(
 #[no_mangle]
 pub extern "C" fn render_frame() {
     with_engine(|state| {
-        // 1. Compute layout.
+        // 1. Compute layout and rebuild hit-test grid.
         if let Some(root_id) = state.root_node {
             if let Some(&layout_id) = state.node_map.get(&root_id) {
                 let _ = state.layout.compute(layout_id, state.cols, state.rows);
+
+                // Rebuild hit-test grid after layout so hit_test queries are up-to-date.
+                state.hit_tester.set_root(layout_id);
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let cols = state.cols as usize;
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let rows = state.rows as usize;
+                let _ = state.hit_tester.build_grid(&state.layout, cols, rows);
             }
         }
 
@@ -843,6 +851,48 @@ pub extern "C" fn push_mouse_event_with_hit_test(
 
         push_mouse_event(state, button, x, y, pixel_x, pixel_y, modifiers, node_id);
     });
+}
+
+/// Perform a hit test at cell coordinates `(x, y)`.
+///
+/// Writes the hit path (deepest node first, then ancestors) as user-facing
+/// `u32` node IDs into `out_ptr`.  Returns the number of IDs written.
+///
+/// # Safety
+///
+/// - `out_ptr` must point to a writable array of at least `max_depth` `u32` values.
+#[no_mangle]
+pub unsafe extern "C" fn hit_test(x: u16, y: u16, out_ptr: *mut u32, max_depth: u32) -> u32 {
+    if out_ptr.is_null() || max_depth == 0 {
+        return 0;
+    }
+    with_engine(|state| {
+        let fx = f32::from(x);
+        let fy = f32::from(y);
+
+        let result = state.hit_tester.hit_test(&state.layout, fx, fy);
+        let Ok(result) = result else {
+            return 0;
+        };
+
+        if result.path.is_empty() {
+            return 0;
+        }
+
+        // Write path in reverse order (deepest node first) for event bubbling.
+        let out = unsafe { std::slice::from_raw_parts_mut(out_ptr, max_depth as usize) };
+        let mut written: u32 = 0;
+        for &layout_id in result.path.iter().rev() {
+            if written >= max_depth {
+                break;
+            }
+            if let Some(user_id) = state.user_id(layout_id) {
+                out[written as usize] = user_id;
+                written += 1;
+            }
+        }
+        written
+    })
 }
 
 /// Focus a specific node by its user-facing id.
@@ -1771,6 +1821,106 @@ mod tests {
         );
         assert_eq!(vs.bg, Some(Color::Rgb(0x11, 0x22, 0x33)));
         assert_eq!(vs.fg, Some(Color::Rgb(0xAA, 0xBB, 0xCC)));
+    }
+
+    // -- Hit-test FFI tests --
+
+    #[test]
+    #[serial]
+    fn hit_test_returns_correct_node() {
+        setup();
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(
+            1,
+            r#"{"width":80,"height":24,"flexDirection":"row"}"#,
+        ));
+        buf.extend(encode_create_node(2, r#"{"width":20,"height":10}"#));
+        buf.extend(encode_create_node(3, r#"{"width":20,"height":10}"#));
+        buf.extend(encode_append_child(1, 2));
+        buf.extend(encode_append_child(1, 3));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+        render_frame();
+
+        let mut out = [0_u32; 16];
+        let count = unsafe { hit_test(5, 5, out.as_mut_ptr(), 16) };
+        assert!(count >= 1, "should hit at least one node, got {count}");
+        // Deepest node first — should be child 2.
+        assert_eq!(out[0], 2, "deepest hit should be node 2");
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn hit_test_empty_area_returns_zero() {
+        setup();
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(1, r#"{"width":10,"height":10}"#));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+        render_frame();
+
+        // Hit outside the root node bounds.
+        let mut out = [0_u32; 16];
+        let count = unsafe { hit_test(50, 50, out.as_mut_ptr(), 16) };
+        assert_eq!(count, 0, "should return 0 for empty area");
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn hit_test_path_includes_ancestors() {
+        setup();
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(
+            1,
+            r#"{"width":80,"height":24,"flexDirection":"column"}"#,
+        ));
+        buf.extend(encode_create_node(2, r#"{"width":20,"height":10}"#));
+        buf.extend(encode_append_child(1, 2));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+        render_frame();
+
+        let mut out = [0_u32; 16];
+        let count = unsafe { hit_test(5, 5, out.as_mut_ptr(), 16) };
+        assert_eq!(count, 2, "path should include child + root");
+        // Deepest first: child 2, then root 1.
+        assert_eq!(out[0], 2);
+        assert_eq!(out[1], 1);
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn hit_test_grid_rebuilt_after_style_change() {
+        setup();
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(
+            1,
+            r#"{"width":80,"height":24,"flexDirection":"row"}"#,
+        ));
+        buf.extend(encode_create_node(2, r#"{"width":20,"height":10}"#));
+        buf.extend(encode_append_child(1, 2));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+        render_frame();
+
+        // Initially node 2 is at x=0..20. Hit at x=5 should return node 2.
+        let mut out = [0_u32; 16];
+        let count = unsafe { hit_test(5, 5, out.as_mut_ptr(), 16) };
+        assert!(count >= 1);
+        assert_eq!(out[0], 2);
+
+        // Move node 2 to be wider so x=25 is now inside it.
+        let update = encode_set_style(2, r#"{"width":40,"height":10}"#);
+        unsafe { apply_mutations(update.as_ptr(), update.len() as u32) };
+        render_frame();
+
+        let count2 = unsafe { hit_test(25, 5, out.as_mut_ptr(), 16) };
+        assert!(count2 >= 1, "after style change, grid should be rebuilt");
+        assert_eq!(out[0], 2, "node 2 should now cover x=25");
+
+        teardown();
     }
 
     #[test]
