@@ -109,6 +109,7 @@ extern "C" {
     fn set_focusable(node_id: u32, focusable: u8);
     fn set_tab_index(node_id: u32, tab_index: i32);
     fn set_focus_trap(node_id: u32, enable: u8);
+    fn hit_test(x: u16, y: u16, out_ptr: *mut u32, max_depth: u32) -> u32;
 }
 
 fn setup() {
@@ -952,6 +953,86 @@ fn request_render_and_render_frame() {
     let mut out = [0.0_f32; 4];
     unsafe { get_layout(1, out.as_mut_ptr()) };
     assert!((out[2] - 80.0).abs() < f32::EPSILON);
+
+    teardown();
+}
+
+// =========================================================================
+// Hit testing
+// =========================================================================
+
+#[test]
+#[serial]
+fn hit_test_returns_correct_node() {
+    let _guard = TEST_MUTEX.lock();
+    setup();
+
+    let mut buf = Vec::new();
+    buf.extend(encode_create_node(
+        1,
+        r#"{"width":80,"height":24,"flexDirection":"column"}"#,
+    ));
+    buf.extend(encode_create_node(2, r#"{"width":40,"height":12}"#));
+    buf.extend(encode_create_node(3, r#"{"width":40,"height":12}"#));
+    buf.extend(encode_append_child(1, 2));
+    buf.extend(encode_append_child(1, 3));
+    unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+    unsafe { render_frame() };
+
+    let mut out = [0_u32; 16];
+    let count = unsafe { hit_test(5, 5, out.as_mut_ptr(), 16) };
+    assert!(count >= 1, "should hit at least one node, got {count}");
+    // Deepest node first — child 2 occupies y=0..12.
+    assert_eq!(out[0], 2, "deepest hit at (5,5) should be node 2");
+
+    // Hit second child at y=15 (child 3 occupies y=12..24).
+    let count2 = unsafe { hit_test(5, 15, out.as_mut_ptr(), 16) };
+    assert!(count2 >= 1);
+    assert_eq!(out[0], 3, "deepest hit at (5,15) should be node 3");
+
+    teardown();
+}
+
+#[test]
+#[serial]
+fn hit_test_miss_returns_zero() {
+    let _guard = TEST_MUTEX.lock();
+    setup();
+
+    let buf = encode_create_node(1, r#"{"width":10,"height":10}"#);
+    unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+    unsafe { render_frame() };
+
+    // Coordinates well outside the 10x10 root.
+    let mut out = [0_u32; 16];
+    let count = unsafe { hit_test(50, 50, out.as_mut_ptr(), 16) };
+    assert_eq!(count, 0, "hit test outside all nodes should return 0");
+
+    teardown();
+}
+
+#[test]
+#[serial]
+fn hit_test_path_includes_ancestors() {
+    let _guard = TEST_MUTEX.lock();
+    setup();
+
+    let mut buf = Vec::new();
+    buf.extend(encode_create_node(
+        1,
+        r#"{"width":80,"height":24,"flexDirection":"column"}"#,
+    ));
+    buf.extend(encode_create_node(2, r#"{"width":40,"height":12}"#));
+    buf.extend(encode_append_child(1, 2));
+    unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+    unsafe { render_frame() };
+
+    let mut out = [0_u32; 16];
+    let count = unsafe { hit_test(5, 5, out.as_mut_ptr(), 16) };
+    assert_eq!(count, 2, "path should include child + root");
+    // Deepest first: child 2, then root 1.
+    assert_eq!(out[0], 2, "first in path should be deepest node (child)");
+    assert_eq!(out[1], 1, "second in path should be ancestor (root)");
 
     teardown();
 }

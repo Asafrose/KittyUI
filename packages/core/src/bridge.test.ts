@@ -370,6 +370,80 @@ describe.skipIf(!canRun)("Bridge FFI contract", () => {
   });
 
   // =========================================================================
+  // Hit testing
+  // =========================================================================
+
+  describe("hitTest", () => {
+    test("hitTest returns first child for top half", () => {
+      const enc = bridge.getEncoder();
+      enc.createNode(1, {
+        width: 80,
+        height: 24,
+        flexDirection: "column",
+      });
+      enc.createNode(2, { height: 12 });
+      enc.createNode(3, { height: 12 });
+      enc.appendChild(1, 2);
+      enc.appendChild(1, 3);
+      bridge.flushMutations();
+      bridge.renderFrame();
+
+      const path = bridge.hitTest(5, 5);
+      expect(path.length).toBeGreaterThanOrEqual(1);
+      expect(path[0]).toBe(2);
+    });
+
+    test("hitTest returns second child for bottom half", () => {
+      const enc = bridge.getEncoder();
+      enc.createNode(1, {
+        width: 80,
+        height: 24,
+        flexDirection: "column",
+      });
+      enc.createNode(2, { height: 12 });
+      enc.createNode(3, { height: 12 });
+      enc.appendChild(1, 2);
+      enc.appendChild(1, 3);
+      bridge.flushMutations();
+      bridge.renderFrame();
+
+      const path = bridge.hitTest(5, 15);
+      expect(path.length).toBeGreaterThanOrEqual(1);
+      expect(path[0]).toBe(3);
+    });
+
+    test("hitTest path includes parent for ancestor bubbling", () => {
+      const enc = bridge.getEncoder();
+      enc.createNode(1, {
+        width: 80,
+        height: 24,
+        flexDirection: "column",
+      });
+      enc.createNode(2, { height: 12 });
+      enc.createNode(3, { height: 12 });
+      enc.appendChild(1, 2);
+      enc.appendChild(1, 3);
+      bridge.flushMutations();
+      bridge.renderFrame();
+
+      const path = bridge.hitTest(5, 5);
+      expect(path.length).toBe(2);
+      expect(path[0]).toBe(2); // deepest (child)
+      expect(path[1]).toBe(1); // ancestor (parent)
+    });
+
+    test("hitTest at empty coordinates returns empty array", () => {
+      const enc = bridge.getEncoder();
+      enc.createNode(1, { width: 10, height: 10 });
+      bridge.flushMutations();
+      bridge.renderFrame();
+
+      const path = bridge.hitTest(50, 50);
+      expect(path).toEqual([]);
+    });
+  });
+
+  // =========================================================================
   // Render loop
   // =========================================================================
 
