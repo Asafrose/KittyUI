@@ -9,6 +9,7 @@ import { createElement, type ReactElement } from "react";
 import { Bridge, MutationEncoder, RenderableTree } from "@kittyui/core";
 import { createRoot } from "./reconciler.js";
 import { TerminalProvider } from "./context.js";
+import { EventDispatcher } from "./event-dispatcher.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -82,12 +83,18 @@ export const createApp = (
   const tree = new RenderableTree(encoder);
 
   // -----------------------------------------------------------------------
-  // 3. Create React root via the reconciler
+  // 3. Create EventDispatcher and wire to bridge events
+  // -----------------------------------------------------------------------
+  const dispatcher = new EventDispatcher(bridge, tree);
+  bridge.onEvents((events) => dispatcher.handleEvents(events));
+
+  // -----------------------------------------------------------------------
+  // 4. Create React root via the reconciler
   // -----------------------------------------------------------------------
   const root = createRoot(tree);
 
   // -----------------------------------------------------------------------
-  // 4. Render the user's element wrapped in TerminalProvider
+  // 5. Render the user's element wrapped in TerminalProvider
   // -----------------------------------------------------------------------
   const wrappedElement = createElement(
     TerminalProvider,
@@ -102,7 +109,7 @@ export const createApp = (
   let isShutdown = false;
 
   // -----------------------------------------------------------------------
-  // 5. Set up stdin in raw mode for keyboard input
+  // 6. Set up stdin in raw mode for keyboard input
   // -----------------------------------------------------------------------
   const stdinDataHandler = (data: string | Buffer): void => {
     const key = typeof data === "string" ? data : data.toString("utf8");
@@ -113,9 +120,11 @@ export const createApp = (
       return;
     }
 
-    // Push every byte as a key event (keyCode = char code, no modifiers, type = keyDown=0)
+    // Push every byte as a key event and dispatch through the event dispatcher
     for (let i = 0; i < key.length; i++) {
-      bridge.pushKeyEvent(key.charCodeAt(i), 0, 0);
+      const keyCode = key.charCodeAt(i);
+      bridge.pushKeyEvent(keyCode, 0, 0);
+      dispatcher.handleStdinKeyEvent(keyCode, 0, 0);
     }
   };
 
@@ -127,7 +136,7 @@ export const createApp = (
   }
 
   // -----------------------------------------------------------------------
-  // 6. Start render loop
+  // 7. Start render loop
   // -----------------------------------------------------------------------
   const FRAME_MS = Math.floor(MS_PER_SECOND / fps);
   const renderLoop = setInterval(() => {
@@ -137,7 +146,7 @@ export const createApp = (
   }, FRAME_MS);
 
   // -----------------------------------------------------------------------
-  // 7. Handle terminal resize
+  // 8. Handle terminal resize
   // -----------------------------------------------------------------------
   const resizeHandler = (): void => {
     bridge.requestRender();
@@ -145,7 +154,7 @@ export const createApp = (
   process.stdout.on("resize", resizeHandler);
 
   // -----------------------------------------------------------------------
-  // 8. Handle SIGTERM / SIGINT
+  // 9. Handle SIGTERM / SIGINT
   // -----------------------------------------------------------------------
   const signalHandler = (): void => {
     shutdown();
