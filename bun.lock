@@ -10,6 +10,19 @@
         "oxlint": "^1.55.0",
       },
     },
+    "examples/dashboard": {
+      "name": "@kittyui/example-dashboard",
+      "version": "0.0.1",
+      "dependencies": {
+        "@kittyui/core": "workspace:*",
+        "@kittyui/react": "workspace:*",
+        "react": "^19.2.4",
+        "react-reconciler": "^0.33.0",
+      },
+      "devDependencies": {
+        "@types/react": "^19.2.14",
+      },
+    },
     "packages/core": {
       "name": "@kittyui/core",
       "version": "0.1.0",
@@ -40,6 +53,8 @@
   },
   "packages": {
     "@kittyui/core": ["@kittyui/core@workspace:packages/core"],
+
+    "@kittyui/example-dashboard": ["@kittyui/example-dashboard@workspace:examples/dashboard"],
 
     "@kittyui/react": ["@kittyui/react@workspace:packages/react"],
 
