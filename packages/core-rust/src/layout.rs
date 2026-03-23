@@ -8,6 +8,11 @@
 use taffy::prelude::*;
 use taffy::TaffyTree;
 
+// Re-export taffy alignment types so downstream modules (e.g. ffi_bridge) do
+// not need a direct `taffy::` dependency which can cause linker/code-signing
+// issues on macOS when the symbol set changes between incremental builds.
+pub use taffy::{AlignItems, JustifyContent};
+
 // ---------------------------------------------------------------------------
 // Dimension helpers
 // ---------------------------------------------------------------------------

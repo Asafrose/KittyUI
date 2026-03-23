@@ -8,6 +8,10 @@ NATIVE_DIR="$CORE_PKG/native"
 
 mkdir -p "$NATIVE_DIR"
 
+# Clean the crate before building to avoid incremental-link artifacts that can
+# cause dlopen hangs on macOS (code-signing / dylib-cache edge case).
+cargo clean -p kittyui-core --manifest-path "$RUST_PKG/Cargo.toml" 2>/dev/null || true
+
 cargo build --release --manifest-path "$RUST_PKG/Cargo.toml"
 
 TARGET_DIR="$RUST_PKG/target/release"
