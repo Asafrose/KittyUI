@@ -20,6 +20,9 @@ export {
   type UseMouseResult,
 } from "./hooks.js";
 
+// Components
+export { Box, Text, Image } from "./components.js";
+
 // JSX prop and event types
 export type {
   BoxProps,
