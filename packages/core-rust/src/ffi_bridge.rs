@@ -228,6 +228,17 @@ pub extern "C" fn shutdown() {
     let _ = crate::screen::exit();
 }
 
+/// Set the viewport (available terminal) size.  The next `render_frame()`
+/// call will use these dimensions for layout computation and will resize
+/// the internal cell buffers accordingly.
+#[no_mangle]
+pub extern "C" fn set_viewport_size(cols: u16, rows: u16) {
+    with_engine(|state| {
+        state.cols = f32::from(cols);
+        state.rows = f32::from(rows);
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Test-mode lifecycle (no terminal side effects)
 // ---------------------------------------------------------------------------

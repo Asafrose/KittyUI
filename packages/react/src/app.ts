@@ -81,6 +81,11 @@ export const createApp = (
   const bridge = new Bridge();
   const initResult = bridge.init();
 
+  // Set viewport to actual terminal size
+  const termCols = process.stdout.columns || DEFAULT_COLS;
+  const termRows = process.stdout.rows || DEFAULT_ROWS;
+  bridge.setViewportSize(termCols, termRows);
+
   if (debug) {
     const { versionMajor, versionMinor, versionPatch } = initResult;
     // eslint-disable-next-line no-console
@@ -161,6 +166,9 @@ export const createApp = (
   // 8. Handle terminal resize
   // -----------------------------------------------------------------------
   const resizeHandler = (): void => {
+    const newCols = process.stdout.columns || DEFAULT_COLS;
+    const newRows = process.stdout.rows || DEFAULT_ROWS;
+    bridge.setViewportSize(newCols, newRows);
     bridge.requestRender();
   };
   process.stdout.on("resize", resizeHandler);

@@ -49,6 +49,7 @@ const symbols = {
   set_focusable: { args: [FFIType.u32, FFIType.u8], returns: FFIType.void },
   set_tab_index: { args: [FFIType.u32, FFIType.i32], returns: FFIType.void },
   set_focus_trap: { args: [FFIType.u32, FFIType.u8], returns: FFIType.void },
+  set_viewport_size: { args: [FFIType.u16, FFIType.u16], returns: FFIType.void },
 } as const;
 
 // -----------------------------------------------------------------------
@@ -270,6 +271,12 @@ export class Bridge {
   setFocusTrap(nodeId: number, enable: boolean): void {
     this.assertReady();
     this.lib!.symbols.set_focus_trap(nodeId, enable ? 1 : 0);
+  }
+
+  /** Set the viewport (terminal) size for layout computation. */
+  setViewportSize(cols: number, rows: number): void {
+    this.assertReady();
+    this.lib!.symbols.set_viewport_size(cols, rows);
   }
 
   /** Decode a raw event buffer and dispatch to listeners. */
