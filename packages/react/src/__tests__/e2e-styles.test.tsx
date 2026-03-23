@@ -135,7 +135,7 @@ describe.skipIf(!canRun)("E2E Styles", () => {
 
     test("Color object", async () => {
       result = await render(
-        <box style={{ backgroundColor: { type: "rgb", r: 0, g: 255, b: 0 }, width: 5, height: 3 }}>
+        <box style={{ backgroundColor: { type: "rgb" as const, r: 0, g: 255, b: 0 }, width: 5, height: 3 }}>
           <text>O</text>
         </box>,
         { cols: 10, rows: 5 },
@@ -201,7 +201,7 @@ describe.skipIf(!canRun)("E2E Styles", () => {
     test("Color object", async () => {
       result = await render(
         <box style={{ width: 10, height: 3 }}>
-          <text style={{ color: { type: "rgb", r: 0, g: 0, b: 255 } }}>T</text>
+          <text style={{ color: { type: "rgb" as const, r: 0, g: 0, b: 255 } }}>T</text>
         </box>,
         { cols: 10, rows: 3 },
       );
