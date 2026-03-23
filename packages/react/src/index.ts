@@ -2,6 +2,10 @@
  * @kittyui/react — React bindings for KittyUI terminal rendering.
  */
 
+// Re-export JSX type augmentation so importing @kittyui/react registers
+// <box>, <text>, <image> as intrinsic elements automatically.
+export type {} from "./jsx.js";
+
 export { hello } from "@kittyui/core";
 export { createRoot, type KittyRoot } from "./reconciler.js";
 export { BoxRenderable, ImageRenderable, TextRenderable, createRenderableForType, type KittyProps } from "./renderables.js";
