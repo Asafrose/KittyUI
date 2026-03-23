@@ -7,6 +7,18 @@
 
 import { describe, test, expect, afterEach } from "bun:test";
 import React from "react";
+import type { CSSStyle } from "@kittyui/core";
+
+// KittyUI JSX intrinsic element declarations for the react-jsx transform.
+declare module "react" {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
+  namespace JSX {
+    interface IntrinsicElements {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      [elemName: string]: any;
+    }
+  }
+}
 import { TestBridge } from "@kittyui/core/src/test-harness/test-bridge.js";
 import "@kittyui/core/src/test-harness/assertions.js";
 import { render, type RenderResult } from "../test-utils/render-jsx.js";

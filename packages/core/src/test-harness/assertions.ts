@@ -10,19 +10,20 @@ import type { VirtualScreen } from "./virtual-screen.js";
 // ---------------------------------------------------------------------------
 
 expect.extend({
-  toContainText(screen: VirtualScreen, text: string) {
-    const pass = screen.containsText(text);
+  toContainText(screen: unknown, text: string) {
+    const vs = screen as VirtualScreen;
+    const pass = vs.containsText(text);
     return {
       message: () =>
         pass
           ? `Expected screen NOT to contain "${text}"`
-          : `Expected screen to contain "${text}" but it was not found.\nScreen content:\n${screen.toString()}`,
+          : `Expected screen to contain "${text}" but it was not found.\nScreen content:\n${vs.toString()}`,
       pass,
     };
   },
 
-  toHaveBgColor(screen: VirtualScreen, row: number, col: number, color: string) {
-    const actual = screen.bgAt(row, col);
+  toHaveBgColor(screen: unknown, row: number, col: number, color: string) {
+    const actual = (screen as VirtualScreen).bgAt(row, col);
     const pass = actual === color;
     return {
       message: () =>
@@ -33,8 +34,8 @@ expect.extend({
     };
   },
 
-  toHaveFgColor(screen: VirtualScreen, row: number, col: number, color: string) {
-    const actual = screen.fgAt(row, col);
+  toHaveFgColor(screen: unknown, row: number, col: number, color: string) {
+    const actual = (screen as VirtualScreen).fgAt(row, col);
     const pass = actual === color;
     return {
       message: () =>
@@ -45,10 +46,11 @@ expect.extend({
     };
   },
 
-  toHaveTextAt(screen: VirtualScreen, row: number, col: number, text: string) {
+  toHaveTextAt(screen: unknown, row: number, col: number, text: string) {
+    const vs = screen as VirtualScreen;
     let actual = "";
     for (let i = 0; i < text.length; i++) {
-      actual += screen.textAt(row, col + i) ?? "";
+      actual += vs.textAt(row, col + i) ?? "";
     }
     const pass = actual === text;
     return {
