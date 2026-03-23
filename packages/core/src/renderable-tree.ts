@@ -5,7 +5,7 @@
 
 import type { MutationEncoder } from "./mutation-encoder.js";
 import type { Renderable } from "./renderable.js";
-import type { ComputedLayout } from "./types.js";
+import type { Color, ComputedLayout } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -13,6 +13,34 @@ import type { ComputedLayout } from "./types.js";
 
 const NOT_FOUND = -1;
 const SPLICE_DELETE_COUNT = 1;
+const HEX_RADIX = 16;
+const BYTE_PAD_LEN = 2;
+
+/** Convert a Color to a hex string like `#rrggbb`. */
+const colorToHex = (color: Color): string | undefined => {
+  if (color.type === "rgb") {
+    const r = color.r.toString(HEX_RADIX).padStart(BYTE_PAD_LEN, "0");
+    const g = color.g.toString(HEX_RADIX).padStart(BYTE_PAD_LEN, "0");
+    const b = color.b.toString(HEX_RADIX).padStart(BYTE_PAD_LEN, "0");
+    return `#${r}${g}${b}`;
+  }
+  return undefined;
+};
+
+/** Merge textStyle visual colors into a style record so they reach Rust. */
+const mergeVisualStyle = (style: Record<string, unknown>, renderable: Renderable): Record<string, unknown> => {
+  const ts = renderable.textStyle;
+  const result = { ...style };
+  if (ts.bg) {
+    const hex = colorToHex(ts.bg);
+    if (hex) result.backgroundColor = hex;
+  }
+  if (ts.fg) {
+    const hex = colorToHex(ts.fg);
+    if (hex) result.color = hex;
+  }
+  return result;
+};
 
 // ---------------------------------------------------------------------------
 // Tree node metadata
@@ -89,6 +117,15 @@ export class RenderableTree {
   }
 
   /**
+   * Register a renderable as an orphan (no parent yet).
+   * Called by the reconciler's createInstance before the node is appended.
+   */
+  addOrphan(renderable: Renderable): void {
+    if (this.nodes.has(renderable.nodeId)) return;
+    this.createNode(renderable, undefined);
+  }
+
+  /**
    * Append a child renderable to a parent.
    * Creates the child node and encodes the appendChild mutation.
    */
@@ -98,7 +135,13 @@ export class RenderableTree {
       throw new Error(`Parent node ${parentId} not found`);
     }
 
-    this.createNode(child, parentId);
+    const existing = this.nodes.get(child.nodeId);
+    if (existing) {
+      // Already registered as orphan — just update parent.
+      existing.parent = parentId;
+    } else {
+      this.createNode(child, parentId);
+    }
     parentNode.children.push(child.nodeId);
 
     this.encoder.appendChild(parentId, child.nodeId);
@@ -118,7 +161,12 @@ export class RenderableTree {
       throw new Error(`Reference node ${beforeId} is not a child of ${parentId}`);
     }
 
-    this.createNode(child, parentId);
+    const existing = this.nodes.get(child.nodeId);
+    if (existing) {
+      existing.parent = parentId;
+    } else {
+      this.createNode(child, parentId);
+    }
     parentNode.children.splice(idx, 0, child.nodeId);
 
     this.encoder.insertBefore(parentId, child.nodeId, beforeId);
@@ -173,7 +221,11 @@ export class RenderableTree {
   flushDirtyStyles(): void {
     for (const [, node] of this.nodes) {
       if (node.renderable.dirty) {
-        this.encoder.setStyle(node.renderable.nodeId, node.renderable.nodeStyle as Record<string, unknown>);
+        const style = mergeVisualStyle(
+          node.renderable.nodeStyle as Record<string, unknown>,
+          node.renderable,
+        );
+        this.encoder.setStyle(node.renderable.nodeId, style);
         if (node.renderable.text !== undefined) {
           this.encoder.setText(node.renderable.nodeId, node.renderable.text);
         }
@@ -209,8 +261,12 @@ export class RenderableTree {
       renderable,
     });
 
-    // Encode creation
-    this.encoder.createNode(nodeId, renderable.nodeStyle as Record<string, unknown>);
+    // Encode creation — merge visual style colors into the style blob.
+    const style = mergeVisualStyle(
+      renderable.nodeStyle as Record<string, unknown>,
+      renderable,
+    );
+    this.encoder.createNode(nodeId, style);
 
     // Set text if present
     if (renderable.text !== undefined) {
