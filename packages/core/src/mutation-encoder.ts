@@ -55,10 +55,10 @@ const flattenDimArray = (arr: unknown, termSize: number): unknown => {
 };
 
 /** Preprocess a style record so Rust receives only flat primitives. */
-const preprocessStyle = (style: Record<string, unknown>): Record<string, unknown> => {
+const preprocessStyle = (style: Record<string, unknown>, overrideCols?: number, overrideRows?: number): Record<string, unknown> => {
   const result: Record<string, unknown> = {};
-  const cols = (typeof process !== "undefined" && process.stdout?.columns) || 80;
-  const rows = (typeof process !== "undefined" && process.stdout?.rows) || 24;
+  const cols = overrideCols ?? ((typeof process !== "undefined" && process.stdout?.columns) || 80);
+  const rows = overrideRows ?? ((typeof process !== "undefined" && process.stdout?.rows) || 24);
 
   for (const [key, value] of Object.entries(style)) {
     if (value === undefined) continue;
@@ -121,8 +121,22 @@ const preprocessStyle = (style: Record<string, unknown>): Record<string, unknown
       case "flexDirection":
       case "flexWrap":
       case "justifyContent":
-      case "alignItems": {
+      case "alignItems":
+      case "bold":
+      case "italic": {
         result[key] = value;
+        break;
+      }
+      case "paddingTop":
+      case "paddingRight":
+      case "paddingBottom":
+      case "paddingLeft":
+      case "marginTop":
+      case "marginRight":
+      case "marginBottom":
+      case "marginLeft": {
+        const resolved = resolveDim(value, cols);
+        if (resolved !== undefined) result[key] = resolved;
         break;
       }
       default:
@@ -137,11 +151,19 @@ export class MutationEncoder {
   private buffer: ArrayBuffer;
   private view: DataView;
   private offset: number;
+  private overrideCols: number | undefined;
+  private overrideRows: number | undefined;
 
   constructor(capacity = INITIAL_CAPACITY) {
     this.buffer = new ArrayBuffer(capacity);
     this.view = new DataView(this.buffer);
     this.offset = 0;
+  }
+
+  /** Set the viewport size for percentage resolution (used in test mode). */
+  setViewportSize(cols: number, rows: number): void {
+    this.overrideCols = cols;
+    this.overrideRows = rows;
   }
 
   /** Reset the encoder for a new batch of mutations. */
@@ -169,7 +191,7 @@ export class MutationEncoder {
   // -----------------------------------------------------------------------
 
   createNode(nodeId: number, style: Record<string, unknown>): void {
-    const jsonBytes = new TextEncoder().encode(JSON.stringify(preprocessStyle(style)));
+    const jsonBytes = new TextEncoder().encode(JSON.stringify(preprocessStyle(style, this.overrideCols, this.overrideRows)));
     this.ensureCapacity(1 + 4 + 2 + jsonBytes.byteLength);
     this.writeU8(OP_CREATE_NODE);
     this.writeU32(nodeId);
@@ -199,7 +221,7 @@ export class MutationEncoder {
   }
 
   setStyle(nodeId: number, style: Record<string, unknown>): void {
-    const jsonBytes = new TextEncoder().encode(JSON.stringify(preprocessStyle(style)));
+    const jsonBytes = new TextEncoder().encode(JSON.stringify(preprocessStyle(style, this.overrideCols, this.overrideRows)));
     this.ensureCapacity(1 + 4 + 2 + jsonBytes.byteLength);
     this.writeU8(OP_SET_STYLE);
     this.writeU32(nodeId);

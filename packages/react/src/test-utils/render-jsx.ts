@@ -54,6 +54,7 @@ export const render = async (
 
   // 3. Wire up encoder + tree.
   const encoder = bridge.getEncoder();
+  encoder.setViewportSize(cols, rows);
   const tree = new RenderableTree(encoder);
 
   // 4. Create React root (this also sets activeTree and root style).
