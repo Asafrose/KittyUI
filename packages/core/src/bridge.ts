@@ -206,6 +206,13 @@ export class Bridge {
     this.eventListeners.push(listener);
   }
 
+  /** Notify all registered event listeners with the given events. */
+  notifyEventListeners(events: KittyEvent[]): void {
+    for (const listener of this.eventListeners) {
+      listener(events);
+    }
+  }
+
   // -----------------------------------------------------------------------
   // Input system
   // -----------------------------------------------------------------------

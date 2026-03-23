@@ -16,6 +16,7 @@ const createMockBridge = () => ({
   blur: mock(() => true),
   onEvents: mock((_listener: (events: KittyEvent[]) => void) => {}),
   pushKeyEvent: mock((_keyCode: number, _modifiers: number, _eventType: number) => {}),
+  notifyEventListeners: mock((_events: KittyEvent[]) => {}),
 });
 
 type MockBridge = ReturnType<typeof createMockBridge>;
