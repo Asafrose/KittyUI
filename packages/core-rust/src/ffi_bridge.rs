@@ -428,23 +428,23 @@ fn parse_style_json(json: &[u8]) -> NodeStyle {
     if let Some(jc) = json_extract_str(s, "justifyContent") {
         if let crate::layout::DisplayMode::Flex(ref mut flex) = style.display {
             flex.justify = match jc {
-                "end" => taffy::JustifyContent::End,
-                "center" => taffy::JustifyContent::Center,
-                "space-between" => taffy::JustifyContent::SpaceBetween,
-                "space-around" => taffy::JustifyContent::SpaceAround,
-                "space-evenly" => taffy::JustifyContent::SpaceEvenly,
-                _ => taffy::JustifyContent::Start,
+                "end" => crate::layout::JustifyContent::End,
+                "center" => crate::layout::JustifyContent::Center,
+                "space-between" => crate::layout::JustifyContent::SpaceBetween,
+                "space-around" => crate::layout::JustifyContent::SpaceAround,
+                "space-evenly" => crate::layout::JustifyContent::SpaceEvenly,
+                _ => crate::layout::JustifyContent::Start,
             };
         }
     }
     if let Some(ai) = json_extract_str(s, "alignItems") {
         if let crate::layout::DisplayMode::Flex(ref mut flex) = style.display {
             flex.align_items = match ai {
-                "end" => taffy::AlignItems::End,
-                "center" => taffy::AlignItems::Center,
-                "baseline" => taffy::AlignItems::Baseline,
-                "start" => taffy::AlignItems::Start,
-                _ => taffy::AlignItems::Stretch,
+                "end" => crate::layout::AlignItems::End,
+                "center" => crate::layout::AlignItems::Center,
+                "baseline" => crate::layout::AlignItems::Baseline,
+                "start" => crate::layout::AlignItems::Start,
+                _ => crate::layout::AlignItems::Stretch,
             };
         }
     }
