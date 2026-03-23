@@ -645,9 +645,7 @@ describe.skipIf(!canRun)("E2E Reconciler", () => {
       expect(result.screen).toContainText("Here");
 
       const screen2 = await result.rerender(
-        <box style={{ width: 20, height: 3 }}>
-          {false ? <text>Here</text> : null}
-        </box>,
+        <box style={{ width: 20, height: 3 }} />,
       );
       expect(screen2.containsText("Here")).toBe(false);
     });
