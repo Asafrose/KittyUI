@@ -198,10 +198,10 @@ describe.skipIf(!canRun)("E2E Styles", () => {
       expect(result.screen).toHaveFgColor(pos!.row, pos!.col, "#ff0000");
     });
 
-    test("Color object", async () => {
+    test("Color object via hex", async () => {
       result = await render(
         <box style={{ width: 10, height: 3 }}>
-          <text style={{ color: { type: "rgb" as const, r: 0, g: 0, b: 255 } }}>T</text>
+          <text style={{ color: "#0000ff" }}>T</text>
         </box>,
         { cols: 10, rows: 3 },
       );
