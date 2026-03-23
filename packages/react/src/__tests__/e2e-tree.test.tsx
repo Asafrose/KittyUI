@@ -76,23 +76,23 @@ describe.skipIf(!canRun)("E2E Tree", () => {
       expect(result.screen).toContainText("Deep");
     });
 
-    test("add child on rerender increases layout count", async () => {
+    test("add child on rerender", async () => {
       result = await render(
         <box style={{ flexDirection: "column", width: 20, height: 5 }}>
           <text key="a">A</text>
         </box>,
         { cols: 20, rows: 5 },
       );
-      const count1 = result.getAllLayouts().size;
+      expect(result.screen).toContainText("A");
 
-      await result.rerender(
+      const screen2 = await result.rerender(
         <box style={{ flexDirection: "column", width: 20, height: 5 }}>
           <text key="a">A</text>
           <text key="b">B</text>
         </box>,
       );
-      const count2 = result.getAllLayouts().size;
-      expect(count2).toBeGreaterThan(count1);
+      expect(screen2).toContainText("A");
+      expect(screen2).toContainText("B");
     });
   });
 
@@ -101,7 +101,7 @@ describe.skipIf(!canRun)("E2E Tree", () => {
   // ==========================================================================
 
   describe("removeChild", () => {
-    test("remove child on rerender reduces layout count", async () => {
+    test("remove child on rerender clears from screen", async () => {
       result = await render(
         <box style={{ flexDirection: "column", width: 20, height: 5 }}>
           <text key="a">Alive</text>
@@ -109,15 +109,15 @@ describe.skipIf(!canRun)("E2E Tree", () => {
         </box>,
         { cols: 20, rows: 5 },
       );
-      const count1 = result.getAllLayouts().size;
+      expect(result.screen).toContainText("Gone");
 
-      await result.rerender(
+      const screen2 = await result.rerender(
         <box style={{ flexDirection: "column", width: 20, height: 5 }}>
           <text key="a">Alive</text>
         </box>,
       );
-      const count2 = result.getAllLayouts().size;
-      expect(count2).toBeLessThan(count1);
+      expect(screen2).toContainText("Alive");
+      expect(screen2.containsText("Gone")).toBe(false);
     });
 
     test("remove first child", async () => {
@@ -177,48 +177,47 @@ describe.skipIf(!canRun)("E2E Tree", () => {
   // ==========================================================================
 
   describe("insertBefore", () => {
-    test("reorder children updates layout", async () => {
+    test("reorder children places new child before existing", async () => {
       result = await render(
         <box style={{ flexDirection: "column", width: 20, height: 5 }}>
-          <box key="a" style={{ height: 2, width: 8 }}><text>A</text></box>
-          <box key="b" style={{ height: 2, width: 12 }}><text>B</text></box>
+          <text key="a">A</text>
+          <text key="b">B</text>
         </box>,
         { cols: 20, rows: 5 },
       );
-      expect(result.screen).toContainText("A");
-      expect(result.screen).toContainText("B");
+      const a1 = result.screen.findText("A");
+      const b1 = result.screen.findText("B");
+      expect(a1!.row).toBeLessThan(b1!.row);
 
-      // Reorder and verify layout still valid
-      await result.rerender(
+      const screen2 = await result.rerender(
         <box style={{ flexDirection: "column", width: 20, height: 5 }}>
-          <box key="b" style={{ height: 2, width: 12 }}><text>B</text></box>
-          <box key="a" style={{ height: 2, width: 8 }}><text>A</text></box>
+          <text key="b">B</text>
+          <text key="a">A</text>
         </box>,
       );
-      const layouts = result.getAllLayouts();
-      expect(layouts.size).toBeGreaterThanOrEqual(4);
+      const a2 = screen2.findText("A");
+      const b2 = screen2.findText("B");
+      expect(b2!.row).toBeLessThan(a2!.row);
     });
 
-    test("insert new child increases layout count", async () => {
+    test("insert new child at beginning renders both", async () => {
       result = await render(
         <box style={{ flexDirection: "column", width: 20, height: 5 }}>
           <text key="b">B</text>
         </box>,
         { cols: 20, rows: 5 },
       );
-      const count1 = result.getAllLayouts().size;
-
-      await result.rerender(
+      const screen2 = await result.rerender(
         <box style={{ flexDirection: "column", width: 20, height: 5 }}>
           <text key="a">A</text>
           <text key="b">B</text>
         </box>,
       );
-      const count2 = result.getAllLayouts().size;
-      expect(count2).toBeGreaterThan(count1);
+      expect(screen2).toContainText("A");
+      expect(screen2).toContainText("B");
     });
 
-    test("insert in middle increases layout count", async () => {
+    test("insert in the middle renders all", async () => {
       result = await render(
         <box style={{ flexDirection: "column", width: 20, height: 5 }}>
           <text key="a">A</text>
@@ -226,17 +225,16 @@ describe.skipIf(!canRun)("E2E Tree", () => {
         </box>,
         { cols: 20, rows: 5 },
       );
-      const count1 = result.getAllLayouts().size;
-
-      await result.rerender(
+      const screen2 = await result.rerender(
         <box style={{ flexDirection: "column", width: 20, height: 5 }}>
           <text key="a">A</text>
           <text key="b">B</text>
           <text key="c">C</text>
         </box>,
       );
-      const count2 = result.getAllLayouts().size;
-      expect(count2).toBeGreaterThan(count1);
+      expect(screen2).toContainText("A");
+      expect(screen2).toContainText("B");
+      expect(screen2).toContainText("C");
     });
   });
 

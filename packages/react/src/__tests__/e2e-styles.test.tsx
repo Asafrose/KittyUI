@@ -251,46 +251,50 @@ describe.skipIf(!canRun)("E2E Styles", () => {
   // ==========================================================================
 
   describe("fontWeight", () => {
-    test("bold renders content", async () => {
+    test("bold", async () => {
       result = await render(
         <box style={{ width: 10, height: 3 }}>
           <text style={{ fontWeight: "bold" }}>B</text>
         </box>,
         { cols: 10, rows: 3 },
       );
-      expect(result.screen).toContainText("B");
+      const pos = result.screen.findText("B");
+      expect(result.screen.cellAt(pos!.row, pos!.col)?.bold).toBe(true);
     });
 
-    test("normal renders content", async () => {
+    test("normal", async () => {
       result = await render(
         <box style={{ width: 10, height: 3 }}>
           <text style={{ fontWeight: "normal" }}>N</text>
         </box>,
         { cols: 10, rows: 3 },
       );
-      expect(result.screen).toContainText("N");
+      const pos = result.screen.findText("N");
+      expect(result.screen.cellAt(pos!.row, pos!.col)?.bold).toBe(false);
     });
   });
 
   describe("fontStyle", () => {
-    test("italic renders content", async () => {
+    test("italic", async () => {
       result = await render(
         <box style={{ width: 10, height: 3 }}>
           <text style={{ fontStyle: "italic" }}>I</text>
         </box>,
         { cols: 10, rows: 3 },
       );
-      expect(result.screen).toContainText("I");
+      const pos = result.screen.findText("I");
+      expect(result.screen.cellAt(pos!.row, pos!.col)?.italic).toBe(true);
     });
 
-    test("normal renders content", async () => {
+    test("normal", async () => {
       result = await render(
         <box style={{ width: 10, height: 3 }}>
           <text style={{ fontStyle: "normal" }}>N</text>
         </box>,
         { cols: 10, rows: 3 },
       );
-      expect(result.screen).toContainText("N");
+      const pos = result.screen.findText("N");
+      expect(result.screen.cellAt(pos!.row, pos!.col)?.italic).toBe(false);
     });
   });
 
@@ -327,11 +331,10 @@ describe.skipIf(!canRun)("E2E Styles", () => {
       expect(findLayoutBySize(result.getAllLayouts(), 20, 5)).toBeDefined();
     });
 
-    test("change flexDirection on rerender updates layout", async () => {
+    test("change flexDirection on rerender", async () => {
       result = await render(
         <box style={{ flexDirection: "row", width: 20, height: 5 }}>
-          <box style={{ width: 5, height: 2 }}><text>A</text></box>
-          <box style={{ width: 5, height: 2 }}><text>B</text></box>
+          <text>A</text><text>B</text>
         </box>,
         { cols: 20, rows: 5 },
       );
@@ -339,14 +342,14 @@ describe.skipIf(!canRun)("E2E Styles", () => {
       const b1 = result.screen.findText("B");
       expect(a1!.row).toBe(b1!.row);
 
-      await result.rerender(
+      const screen2 = await result.rerender(
         <box style={{ flexDirection: "column", width: 20, height: 5 }}>
-          <box style={{ width: 5, height: 2 }}><text>A</text></box>
-          <box style={{ width: 5, height: 2 }}><text>B</text></box>
+          <text>A</text><text>B</text>
         </box>,
       );
-      const layouts = result.getAllLayouts();
-      expect(layouts.size).toBeGreaterThanOrEqual(4);
+      const a2 = screen2.findText("A");
+      const b2 = screen2.findText("B");
+      expect(b2!.row).toBeGreaterThan(a2!.row);
     });
 
     test("change text color on rerender", async () => {

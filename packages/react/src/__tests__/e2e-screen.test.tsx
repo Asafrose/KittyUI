@@ -463,24 +463,26 @@ describe.skipIf(!canRun)("VirtualScreen integration", () => {
     expect(result.screen.fgAt(pos!.row, pos!.col)).toBe("#00ff00");
   });
 
-  test("bold text renders content", async () => {
+  test("bold accessible via cellAt", async () => {
     result = await render(
       <box style={{ width: 20, height: 3 }}>
         <text style={{ fontWeight: "bold" }}>B</text>
       </box>,
       { cols: 20, rows: 3 },
     );
-    expect(result.screen).toContainText("B");
+    const pos = result.screen.findText("B");
+    expect(result.screen.cellAt(pos!.row, pos!.col)?.bold).toBe(true);
   });
 
-  test("italic text renders content", async () => {
+  test("italic accessible via cellAt", async () => {
     result = await render(
       <box style={{ width: 20, height: 3 }}>
         <text style={{ fontStyle: "italic" }}>I</text>
       </box>,
       { cols: 20, rows: 3 },
     );
-    expect(result.screen).toContainText("I");
+    const pos = result.screen.findText("I");
+    expect(result.screen.cellAt(pos!.row, pos!.col)?.italic).toBe(true);
   });
 
   test("getTextContent after render", async () => {

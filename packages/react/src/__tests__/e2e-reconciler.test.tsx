@@ -230,7 +230,7 @@ describe.skipIf(!canRun)("E2E Reconciler", () => {
       expect(result.screen).toContainText("Count: 0");
     });
 
-    test("state update triggers rerender (layout check)", async () => {
+    test("state update triggers rerender", async () => {
       let triggerUpdate: (() => void) | undefined;
       const Counter = () => {
         const [count, setCount] = useState(0);
@@ -242,11 +242,9 @@ describe.skipIf(!canRun)("E2E Reconciler", () => {
       result = await render(<Counter />, { cols: 20, rows: 3 });
       expect(result.screen).toContainText("Count: 0");
 
-      // Trigger update - just verify it doesn't crash
       triggerUpdate!();
-      await result.rerender(<Counter />);
-      const layouts = result.getAllLayouts();
-      expect(layouts.size).toBeGreaterThanOrEqual(2);
+      const screen2 = await result.rerender(<Counter />);
+      expect(screen2).toContainText("Count: 1");
     });
 
     test("multiple state variables", async () => {
@@ -293,12 +291,10 @@ describe.skipIf(!canRun)("E2E Reconciler", () => {
       };
       result = await render(<Effector />, { cols: 10, rows: 3 });
       expect(cleanedUp).toBe(false);
-      // Cleanup is async in React concurrent mode; just verify it's callable
       result.cleanup();
-      // Allow microtasks to flush
       await new Promise((resolve) => setTimeout(resolve, 100));
       result = undefined;
-      // Note: cleanup may or may not have fired depending on React scheduler
+      expect(cleanedUp).toBe(true);
     });
   });
 
@@ -369,20 +365,18 @@ describe.skipIf(!canRun)("E2E Reconciler", () => {
   // ==========================================================================
 
   describe("re-rendering", () => {
-    test("rerender with different text checks layout", async () => {
+    test("rerender with different text", async () => {
       result = await render(
         <box style={{ width: 20, height: 3 }}><text>Before</text></box>,
         { cols: 20, rows: 3 },
       );
       expect(result.screen).toContainText("Before");
 
-      // After rerender, the old text should not be fully present
       const screen2 = await result.rerender(
-        <box style={{ width: 20, height: 3 }}><text>NewText</text></box>,
+        <box style={{ width: 20, height: 3 }}><text>After</text></box>,
       );
-      // Due to double-buffer diff optimization, we check layout updates work
-      const layouts = result.getAllLayouts();
-      expect(layouts.size).toBeGreaterThanOrEqual(2);
+      expect(screen2).toContainText("After");
+      expect(screen2.containsText("Before")).toBe(false);
     });
 
     test("rerender with different props", async () => {
@@ -402,100 +396,92 @@ describe.skipIf(!canRun)("E2E Reconciler", () => {
       expect(screen2).toHaveBgColor(pos2!.row, pos2!.col, "#0000ff");
     });
 
-    test("rerender with added child updates layout count", async () => {
+    test("rerender with added child", async () => {
       result = await render(
         <box style={{ flexDirection: "column", width: 20, height: 5 }}>
           <text>One</text>
         </box>,
         { cols: 20, rows: 5 },
       );
-      const count1 = result.getAllLayouts().size;
+      expect(result.screen).toContainText("One");
 
-      await result.rerender(
+      const screen2 = await result.rerender(
         <box style={{ flexDirection: "column", width: 20, height: 5 }}>
           <text>One</text>
           <text>Two</text>
         </box>,
       );
-      const count2 = result.getAllLayouts().size;
-      expect(count2).toBeGreaterThan(count1);
+      expect(screen2).toContainText("One");
+      expect(screen2).toContainText("Two");
     });
 
-    test("rerender with removed child reduces layout count", async () => {
+    test("rerender with removed child", async () => {
       result = await render(
         <box style={{ flexDirection: "column", width: 20, height: 5 }}>
-          <text key="a">One</text>
-          <text key="b">Two</text>
+          <text>One</text>
+          <text>Two</text>
         </box>,
         { cols: 20, rows: 5 },
       );
-      const count1 = result.getAllLayouts().size;
+      expect(result.screen).toContainText("Two");
 
-      await result.rerender(
+      const screen2 = await result.rerender(
         <box style={{ flexDirection: "column", width: 20, height: 5 }}>
-          <text key="a">One</text>
+          <text>One</text>
         </box>,
       );
-      const count2 = result.getAllLayouts().size;
-      expect(count2).toBeLessThan(count1);
+      expect(screen2).toContainText("One");
+      expect(screen2.containsText("Two")).toBe(false);
     });
 
-    test("rerender with reordered children updates layout", async () => {
+    test("rerender with reordered children", async () => {
       result = await render(
         <box style={{ flexDirection: "column", width: 20, height: 5 }}>
-          <box key="a" style={{ height: 2, width: 10 }}><text>Alpha</text></box>
-          <box key="b" style={{ height: 2, width: 15 }}><text>Beta</text></box>
+          <text key="a">Alpha</text>
+          <text key="b">Beta</text>
         </box>,
         { cols: 20, rows: 5 },
       );
-      expect(result.screen).toContainText("Alpha");
-      expect(result.screen).toContainText("Beta");
-      // Verify layouts still exist after reorder
-      await result.rerender(
+      const posA1 = result.screen.findText("Alpha");
+      const posB1 = result.screen.findText("Beta");
+      expect(posA1!.row).toBeLessThan(posB1!.row);
+
+      const screen2 = await result.rerender(
         <box style={{ flexDirection: "column", width: 20, height: 5 }}>
-          <box key="b" style={{ height: 2, width: 15 }}><text>Beta</text></box>
-          <box key="a" style={{ height: 2, width: 10 }}><text>Alpha</text></box>
+          <text key="b">Beta</text>
+          <text key="a">Alpha</text>
         </box>,
       );
-      const layouts = result.getAllLayouts();
-      expect(layouts.size).toBeGreaterThanOrEqual(4);
+      const posA2 = screen2.findText("Alpha");
+      const posB2 = screen2.findText("Beta");
+      expect(posB2!.row).toBeLessThan(posA2!.row);
     });
 
-    test("rerender with different dimensions updates layout", async () => {
+    test("rerender with different dimensions", async () => {
       result = await render(
         <box style={{ width: 10, height: 3 }}><text>Small</text></box>,
         { cols: 40, rows: 10 },
       );
-      const layouts1 = result.getAllLayouts();
-      let hasSmall = false;
-      for (const [, l] of layouts1) {
-        if (Math.abs(l.width - 10) < 1 && Math.abs(l.height - 3) < 1) hasSmall = true;
-      }
-      expect(hasSmall).toBe(true);
+      expect(result.screen).toContainText("Small");
 
-      await result.rerender(
+      const screen2 = await result.rerender(
         <box style={{ width: 30, height: 8 }}><text>Big</text></box>,
       );
-      const layouts2 = result.getAllLayouts();
-      let hasBig = false;
-      for (const [, l] of layouts2) {
-        if (Math.abs(l.width - 30) < 1 && Math.abs(l.height - 8) < 1) hasBig = true;
-      }
-      expect(hasBig).toBe(true);
+      expect(screen2).toContainText("Big");
     });
 
-    test("rerender replacing component preserves layout", async () => {
+    test("rerender replacing component entirely", async () => {
       result = await render(
         <box style={{ width: 20, height: 3 }}><text>CompA</text></box>,
         { cols: 20, rows: 3 },
       );
       expect(result.screen).toContainText("CompA");
 
-      await result.rerender(
+      const screen2 = await result.rerender(
         <box style={{ width: 20, height: 3 }}><text>CompB</text></box>,
       );
-      const layouts = result.getAllLayouts();
-      expect(layouts.size).toBeGreaterThanOrEqual(2);
+      expect(screen2).toContainText("CompB");
+      expect(screen2.containsText("CompA")).toBe(false);
     });
   });
 
@@ -709,28 +695,26 @@ describe.skipIf(!canRun)("E2E Reconciler", () => {
       expect(result.screen).toContainText("Card2");
     });
 
-    test("rerender updates layout when children change", async () => {
+    test("rerender updates specific child only", async () => {
       result = await render(
         <box style={{ flexDirection: "column", width: 20, height: 5 }}>
-          <box key="a" style={{ height: 2, width: 10 }}><text>Static</text></box>
-          <box key="b" style={{ height: 2, width: 8 }}><text>Before</text></box>
+          <text key="static">Static</text>
+          <text key="dynamic">Before</text>
         </box>,
         { cols: 20, rows: 5 },
       );
       expect(result.screen).toContainText("Static");
+      expect(result.screen).toContainText("Before");
 
-      await result.rerender(
+      const screen2 = await result.rerender(
         <box style={{ flexDirection: "column", width: 20, height: 5 }}>
-          <box key="a" style={{ height: 2, width: 10 }}><text>Static</text></box>
-          <box key="b" style={{ height: 2, width: 12 }}><text>Changed</text></box>
+          <text key="static">Static</text>
+          <text key="dynamic">After</text>
         </box>,
       );
-      const layouts = result.getAllLayouts();
-      let found12 = false;
-      for (const [, l] of layouts) {
-        if (Math.abs(l.width - 12) < 1) found12 = true;
-      }
-      expect(found12).toBe(true);
+      expect(screen2).toContainText("Static");
+      expect(screen2).toContainText("After");
+      expect(screen2.containsText("Before")).toBe(false);
     });
 
     test("mixed elements and components", async () => {

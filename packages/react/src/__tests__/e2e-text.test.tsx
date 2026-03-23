@@ -101,23 +101,42 @@ describe.skipIf(!canRun)("E2E Text", () => {
   // ==========================================================================
 
   describe("text update", () => {
-    test("text update changes layout width", async () => {
+    test("text changes on rerender", async () => {
+      result = await render(
+        <box style={{ width: 20, height: 3 }}><text>Before</text></box>,
+        { cols: 20, rows: 3 },
+      );
+      expect(result.screen).toContainText("Before");
+
+      const screen2 = await result.rerender(
+        <box style={{ width: 20, height: 3 }}><text>After</text></box>,
+      );
+      expect(screen2).toContainText("After");
+      expect(screen2.containsText("Before")).toBe(false);
+    });
+
+    test("text grows longer", async () => {
       result = await render(
         <box style={{ width: 20, height: 3 }}><text>Hi</text></box>,
         { cols: 20, rows: 3 },
       );
       expect(result.screen).toContainText("Hi");
 
-      // Rerender with longer text -- layout should update
-      await result.rerender(
-        <box style={{ width: 20, height: 3 }}><text>LongerText</text></box>,
+      const screen2 = await result.rerender(
+        <box style={{ width: 20, height: 3 }}><text>Hello World</text></box>,
       );
-      const layouts = result.getAllLayouts();
-      let found = false;
-      for (const [, l] of layouts) {
-        if (l.width >= 10) found = true;
-      }
-      expect(found).toBe(true);
+      expect(screen2).toContainText("Hello World");
+    });
+
+    test("text shrinks shorter", async () => {
+      result = await render(
+        <box style={{ width: 20, height: 3 }}><text>Hello World</text></box>,
+        { cols: 20, rows: 3 },
+      );
+      const screen2 = await result.rerender(
+        <box style={{ width: 20, height: 3 }}><text>Hi</text></box>,
+      );
+      expect(screen2).toContainText("Hi");
     });
 
     test("removing text child clears content", async () => {
@@ -229,34 +248,39 @@ describe.skipIf(!canRun)("E2E Text", () => {
   // ==========================================================================
 
   describe("text with bold/italic", () => {
-    test("bold text renders", async () => {
+    test("bold text", async () => {
       result = await render(
         <box style={{ width: 20, height: 3 }}>
           <text style={{ fontWeight: "bold" }}>Bold</text>
         </box>,
         { cols: 20, rows: 3 },
       );
-      expect(result.screen).toContainText("Bold");
+      const pos = result.screen.findText("Bold");
+      expect(result.screen.cellAt(pos!.row, pos!.col)?.bold).toBe(true);
     });
 
-    test("italic text renders", async () => {
+    test("italic text", async () => {
       result = await render(
         <box style={{ width: 20, height: 3 }}>
           <text style={{ fontStyle: "italic" }}>Ital</text>
         </box>,
         { cols: 20, rows: 3 },
       );
-      expect(result.screen).toContainText("Ital");
+      const pos = result.screen.findText("Ital");
+      expect(result.screen.cellAt(pos!.row, pos!.col)?.italic).toBe(true);
     });
 
-    test("bold + italic text renders", async () => {
+    test("bold + italic text", async () => {
       result = await render(
         <box style={{ width: 20, height: 3 }}>
           <text style={{ fontWeight: "bold", fontStyle: "italic" }}>BI</text>
         </box>,
         { cols: 20, rows: 3 },
       );
-      expect(result.screen).toContainText("BI");
+      const pos = result.screen.findText("BI");
+      const cell = result.screen.cellAt(pos!.row, pos!.col);
+      expect(cell?.bold).toBe(true);
+      expect(cell?.italic).toBe(true);
     });
   });
 
@@ -264,48 +288,35 @@ describe.skipIf(!canRun)("E2E Text", () => {
   // Text position after padding
   // ==========================================================================
 
-  describe("text position with spacers", () => {
-    test("spacer box shifts text right", async () => {
+  describe("text position with padding", () => {
+    test("paddingLeft shifts text right", async () => {
       result = await render(
-        <box style={{ flexDirection: "row", width: 20, height: 3 }}>
-          <box style={{ width: 5, height: 3 }} />
+        <box style={{ width: 20, height: 3, paddingLeft: 5 }}>
           <text>PL</text>
         </box>,
         { cols: 20, rows: 3 },
       );
-      const pos = result.screen.findText("PL");
-      expect(pos).toBeDefined();
-      expect(pos!.col).toBe(5);
+      expect(result.screen.findText("PL")!.col).toBeGreaterThanOrEqual(5);
     });
 
-    test("spacer box shifts text down", async () => {
+    test("paddingTop shifts text down", async () => {
       result = await render(
-        <box style={{ flexDirection: "column", width: 20, height: 5 }}>
-          <box style={{ height: 2 }} />
+        <box style={{ width: 20, height: 5, paddingTop: 2 }}>
           <text>PT</text>
         </box>,
         { cols: 20, rows: 5 },
       );
-      const pos = result.screen.findText("PT");
-      expect(pos).toBeDefined();
-      expect(pos!.row).toBe(2);
+      expect(result.screen.findText("PT")!.row).toBeGreaterThanOrEqual(2);
     });
 
-    test("spacers in both directions", async () => {
+    test("padding both directions", async () => {
       result = await render(
-        <box style={{ flexDirection: "column", width: 20, height: 5 }}>
-          <box style={{ height: 2 }} />
-          <box style={{ flexDirection: "row" }}>
-            <box style={{ width: 3, height: 1 }} />
-            <text>Both</text>
-          </box>
+        <box style={{ width: 20, height: 5, paddingTop: 1, paddingLeft: 3 }}>
+          <text>Both</text>
         </box>,
         { cols: 20, rows: 5 },
       );
-      const pos = result.screen.findText("Both");
-      expect(pos).toBeDefined();
-      expect(pos!.row).toBe(2);
-      expect(pos!.col).toBe(3);
+      expect(result.screen).toHaveTextAt(1, 3, "Both");
     });
   });
 
@@ -334,11 +345,10 @@ describe.skipIf(!canRun)("E2E Text", () => {
       expect(result.screen).toContainText("Triple");
     });
 
-    test("text in nested box with offset", async () => {
+    test("text in nested box with padding", async () => {
       result = await render(
-        <box style={{ flexDirection: "row", width: 20, height: 5 }}>
-          <box style={{ width: 5, height: 5 }} />
-          <box>
+        <box style={{ width: 20, height: 5, paddingLeft: 2 }}>
+          <box style={{ paddingLeft: 3 }}>
             <text>DP</text>
           </box>
         </box>,

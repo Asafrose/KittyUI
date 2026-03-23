@@ -27,7 +27,7 @@ const colorToHex = (color: Color): string | undefined => {
   return undefined;
 };
 
-/** Merge textStyle visual colors into a style record so they reach Rust. */
+/** Merge textStyle visual properties into a style record so they reach Rust. */
 const mergeVisualStyle = (style: Record<string, unknown>, renderable: Renderable): Record<string, unknown> => {
   const ts = renderable.textStyle;
   const result = { ...style };
@@ -38,6 +38,12 @@ const mergeVisualStyle = (style: Record<string, unknown>, renderable: Renderable
   if (ts.fg) {
     const hex = colorToHex(ts.fg);
     if (hex) result.color = hex;
+  }
+  if (ts.bold) {
+    result.bold = true;
+  }
+  if (ts.italic) {
+    result.italic = true;
   }
   return result;
 };

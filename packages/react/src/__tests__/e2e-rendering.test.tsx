@@ -421,7 +421,7 @@ describe.skipIf(!canRun)("E2E Rendering", () => {
   // ==========================================================================
 
   describe("bold text", () => {
-    test("bold text renders content", async () => {
+    test("bold text renders with bold attribute", async () => {
       result = await render(
         <box style={{ width: 20, height: 3 }}>
           <text style={{ fontWeight: "bold" }}>Bold</text>
@@ -429,9 +429,11 @@ describe.skipIf(!canRun)("E2E Rendering", () => {
         { cols: 20, rows: 3 },
       );
       expect(result.screen).toContainText("Bold");
+      const pos = result.screen.findText("Bold");
+      expect(result.screen.cellAt(pos!.row, pos!.col)?.bold).toBe(true);
     });
 
-    test("normal fontWeight renders content", async () => {
+    test("normal fontWeight is not bold", async () => {
       result = await render(
         <box style={{ width: 20, height: 3 }}>
           <text style={{ fontWeight: "normal" }}>Normal</text>
@@ -439,6 +441,8 @@ describe.skipIf(!canRun)("E2E Rendering", () => {
         { cols: 20, rows: 3 },
       );
       expect(result.screen).toContainText("Normal");
+      const pos = result.screen.findText("Normal");
+      expect(result.screen.cellAt(pos!.row, pos!.col)?.bold).toBe(false);
     });
   });
 
@@ -447,7 +451,7 @@ describe.skipIf(!canRun)("E2E Rendering", () => {
   // ==========================================================================
 
   describe("italic text", () => {
-    test("italic text renders content", async () => {
+    test("italic text renders with italic attribute", async () => {
       result = await render(
         <box style={{ width: 20, height: 3 }}>
           <text style={{ fontStyle: "italic" }}>Italic</text>
@@ -455,16 +459,19 @@ describe.skipIf(!canRun)("E2E Rendering", () => {
         { cols: 20, rows: 3 },
       );
       expect(result.screen).toContainText("Italic");
+      const pos = result.screen.findText("Italic");
+      expect(result.screen.cellAt(pos!.row, pos!.col)?.italic).toBe(true);
     });
 
-    test("normal fontStyle renders content", async () => {
+    test("normal fontStyle is not italic", async () => {
       result = await render(
         <box style={{ width: 20, height: 3 }}>
           <text style={{ fontStyle: "normal" }}>Plain</text>
         </box>,
         { cols: 20, rows: 3 },
       );
-      expect(result.screen).toContainText("Plain");
+      const pos = result.screen.findText("Plain");
+      expect(result.screen.cellAt(pos!.row, pos!.col)?.italic).toBe(false);
     });
   });
 
@@ -473,14 +480,17 @@ describe.skipIf(!canRun)("E2E Rendering", () => {
   // ==========================================================================
 
   describe("combined styles", () => {
-    test("bold + italic renders content", async () => {
+    test("bold + italic", async () => {
       result = await render(
         <box style={{ width: 20, height: 3 }}>
           <text style={{ fontWeight: "bold", fontStyle: "italic" }}>BI</text>
         </box>,
         { cols: 20, rows: 3 },
       );
-      expect(result.screen).toContainText("BI");
+      const pos = result.screen.findText("BI");
+      expect(pos).toBeDefined();
+      expect(result.screen.cellAt(pos!.row, pos!.col)?.bold).toBe(true);
+      expect(result.screen.cellAt(pos!.row, pos!.col)?.italic).toBe(true);
     });
 
     test("colored text with background", async () => {
@@ -496,7 +506,7 @@ describe.skipIf(!canRun)("E2E Rendering", () => {
       expect(result.screen).toHaveBgColor(pos!.row, pos!.col, "#0000ff");
     });
 
-    test("bold colored text renders with color", async () => {
+    test("bold colored text", async () => {
       result = await render(
         <box style={{ width: 20, height: 3 }}>
           <text style={{ color: "#00ff00", fontWeight: "bold" }}>BG</text>
@@ -506,6 +516,7 @@ describe.skipIf(!canRun)("E2E Rendering", () => {
       const pos = result.screen.findText("BG");
       expect(pos).toBeDefined();
       expect(result.screen).toHaveFgColor(pos!.row, pos!.col, "#00ff00");
+      expect(result.screen.cellAt(pos!.row, pos!.col)?.bold).toBe(true);
     });
   });
 
@@ -562,21 +573,14 @@ describe.skipIf(!canRun)("E2E Rendering", () => {
       expect(result.screen).toHaveTextAt(0, 0, "Hello");
     });
 
-    test("text after spacer at correct position", async () => {
+    test("text in padded box at correct position", async () => {
       result = await render(
-        <box style={{ flexDirection: "column", width: 20, height: 5 }}>
-          <box style={{ height: 1 }} />
-          <box style={{ flexDirection: "row" }}>
-            <box style={{ width: 3, height: 1 }} />
-            <text>Pad</text>
-          </box>
+        <box style={{ width: 20, height: 5, paddingLeft: 3, paddingTop: 1 }}>
+          <text>Pad</text>
         </box>,
         { cols: 20, rows: 5 },
       );
-      const pos = result.screen.findText("Pad");
-      expect(pos).toBeDefined();
-      expect(pos!.col).toBe(3);
-      expect(pos!.row).toBe(1);
+      expect(result.screen).toHaveTextAt(1, 3, "Pad");
     });
 
     test("second child text at correct column", async () => {
