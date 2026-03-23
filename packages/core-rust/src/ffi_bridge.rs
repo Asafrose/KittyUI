@@ -225,6 +225,82 @@ pub extern "C" fn shutdown() {
 }
 
 // ---------------------------------------------------------------------------
+// Test-mode lifecycle (no terminal side effects)
+// ---------------------------------------------------------------------------
+
+/// Initialise the engine in test mode.  Like [`init`] but:
+/// - Captures output into an internal buffer instead of writing to stdout.
+/// - Uses the provided `cols`/`rows` instead of the real terminal size.
+/// - Does **not** enter the alternate screen or hide the cursor.
+///
+/// # Safety
+///
+/// - Must be called exactly once before any other FFI function.
+/// - `out_ptr` must point to a writable `InitResult`.
+#[no_mangle]
+pub unsafe extern "C" fn init_test_mode(cols: u16, rows: u16, out_ptr: *mut InitResult) {
+    let mut guard = ENGINE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut state = EngineState::new();
+    state.output = Some(Vec::new());
+    state.cols = f32::from(cols);
+    state.rows = f32::from(rows);
+    state.double_buf = DoubleBuffer::new(usize::from(cols), usize::from(rows));
+    *guard = Some(state);
+    if !out_ptr.is_null() {
+        unsafe {
+            out_ptr.write(InitResult {
+                version_major: 0,
+                version_minor: 1,
+                version_patch: 0,
+                batched_ffi: 1,
+            });
+        }
+    }
+}
+
+/// Copy the captured output bytes into `out_ptr` (up to `max_len`), clear the
+/// internal buffer, and return the number of bytes written.
+///
+/// # Safety
+///
+/// - `out_ptr` must point to a writable byte array of at least `max_len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn get_rendered_output(out_ptr: *mut u8, max_len: u32) -> u32 {
+    if out_ptr.is_null() || max_len == 0 {
+        return 0;
+    }
+    with_engine(|state| {
+        let Some(ref mut buf) = state.output else {
+            return 0;
+        };
+        #[allow(clippy::cast_possible_truncation)]
+        let copy_len = buf.len().min(max_len as usize);
+        if copy_len > 0 {
+            unsafe {
+                std::ptr::copy_nonoverlapping(buf.as_ptr(), out_ptr, copy_len);
+            }
+        }
+        buf.clear();
+        #[allow(clippy::cast_possible_truncation)]
+        let result = copy_len as u32;
+        result
+    })
+}
+
+/// Shut down the engine in test mode — drops all state but does **not**
+/// write cursor-show or exit the alternate screen.
+#[no_mangle]
+pub extern "C" fn shutdown_test_mode() {
+    RENDER_LOOP_RUNNING.store(false, Ordering::SeqCst);
+    let mut guard = ENGINE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *guard = None;
+}
+
+// ---------------------------------------------------------------------------
 // Mutation decoding
 // ---------------------------------------------------------------------------
 
@@ -570,13 +646,23 @@ pub unsafe extern "C" fn apply_mutations(buffer_ptr: *const u8, buffer_len: u32)
 /// `parent_x` / `parent_y` are the absolute position of the parent so that
 /// each child's relative layout coordinates can be converted to absolute
 /// positions in the cell buffer.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+///
+/// `inherited_bg` / `inherited_fg` are the resolved colors from ancestor
+/// nodes, allowing children to inherit colours they don't override.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::too_many_arguments,
+    clippy::similar_names
+)]
 fn paint_node(
     state: &EngineState,
     back: &mut crate::cell::CellBuffer,
     node_id: u32,
     parent_x: f32,
     parent_y: f32,
+    inherited_bg: Option<Color>,
+    inherited_fg: Option<Color>,
 ) {
     let Some(&layout_id) = state.node_map.get(&node_id) else {
         return;
@@ -592,28 +678,50 @@ fn paint_node(
     let w = cl.width as usize;
     let h = cl.height as usize;
 
-    // Build cell style from visual style.
+    // Build cell style from visual style, inheriting from ancestors.
     let vs = state.visual_styles.get(&node_id);
-    let cell_style = CellStyle {
-        bg: vs.and_then(|v| v.bg),
-        fg: vs.and_then(|v| v.fg),
-        ..CellStyle::new()
-    };
+    let own_bg = vs.and_then(|v| v.bg);
+    let own_fg = vs.and_then(|v| v.fg);
+    let resolved_bg = own_bg.or(inherited_bg);
+    let resolved_fg = own_fg.or(inherited_fg);
 
-    // Paint background.
-    for row in y0..y0 + h {
-        for col in x0..x0 + w {
-            if let Some(cell) = back.get_mut(row, col) {
-                cell.ch = ' ';
-                cell.style = cell_style;
+    // Paint background only if we have an explicit bg color (own or inherited).
+    if resolved_bg.is_some() {
+        let cell_style = CellStyle {
+            bg: resolved_bg,
+            fg: resolved_fg,
+            ..CellStyle::new()
+        };
+        for row in y0..y0 + h {
+            for col in x0..x0 + w {
+                if let Some(cell) = back.get_mut(row, col) {
+                    cell.ch = ' ';
+                    cell.style = cell_style;
+                }
             }
         }
     }
 
-    // Paint text content.
+    // Paint text content — use resolved colours.
     if let Some(text) = state.text_content.get(&node_id) {
         if !text.is_empty() {
-            back.put_str(y0, x0, text, cell_style);
+            for (i, ch) in text.chars().enumerate() {
+                let c = x0 + i;
+                if c >= back.width() {
+                    break;
+                }
+                if y0 < back.height() {
+                    if let Some(cell) = back.get_mut(y0, c) {
+                        cell.ch = ch;
+                        if let Some(fg) = resolved_fg {
+                            cell.style.fg = Some(fg);
+                        }
+                        if let Some(bg) = resolved_bg {
+                            cell.style.bg = Some(bg);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -621,7 +729,15 @@ fn paint_node(
     if let Ok(children) = state.layout.children(layout_id) {
         for child_lid in children {
             if let Some(&child_uid) = state.reverse_node_map.get(&child_lid) {
-                paint_node(state, back, child_uid, abs_x, abs_y);
+                paint_node(
+                    state,
+                    back,
+                    child_uid,
+                    abs_x,
+                    abs_y,
+                    resolved_bg,
+                    resolved_fg,
+                );
             }
         }
     }
@@ -667,7 +783,7 @@ pub extern "C" fn render_frame() {
                     tmp
                 };
 
-                paint_node(state, &mut back_buf, root_id, 0.0, 0.0);
+                paint_node(state, &mut back_buf, root_id, 0.0, 0.0, None, None);
 
                 // Swap the painted buffer back.
                 std::mem::swap(state.double_buf.back_mut(), &mut back_buf);
@@ -1921,6 +2037,71 @@ mod tests {
         assert_eq!(out[0], 2, "node 2 should now cover x=25");
 
         teardown();
+    }
+
+    // -- Test-mode FFI tests --
+
+    #[test]
+    #[serial]
+    fn init_test_mode_creates_engine_with_custom_size() {
+        let mut caps = InitResult {
+            version_major: 0,
+            version_minor: 0,
+            version_patch: 0,
+            batched_ffi: 0,
+        };
+        unsafe { init_test_mode(40, 10, &mut caps) };
+        assert_eq!(caps.version_major, 0);
+        assert_eq!(caps.version_minor, 1);
+        assert_eq!(caps.batched_ffi, 1);
+        with_engine(|state| {
+            assert!((state.cols - 40.0).abs() < f32::EPSILON);
+            assert!((state.rows - 10.0).abs() < f32::EPSILON);
+            assert_eq!(state.double_buf.width(), 40);
+            assert_eq!(state.double_buf.height(), 10);
+            assert!(state.output.is_some());
+        });
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn get_rendered_output_copies_and_clears() {
+        unsafe { init_test_mode(20, 5, std::ptr::null_mut()) };
+
+        // Create a node with content to trigger output.
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(
+            1,
+            r##"{"width":20,"height":5,"backgroundColor":"#FF0000"}"##,
+        ));
+        buf.extend(encode_set_text(1, "AB"));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+        render_frame();
+
+        // Read the output.
+        let mut out = vec![0u8; 4096];
+        let n = unsafe { get_rendered_output(out.as_mut_ptr(), 4096) };
+        assert!(n > 0, "should have produced output");
+        let output_str = std::str::from_utf8(&out[..n as usize]).unwrap_or("");
+        assert!(output_str.contains("AB"), "output should contain text");
+
+        // Second call should return 0 (buffer was cleared).
+        let n2 = unsafe { get_rendered_output(out.as_mut_ptr(), 4096) };
+        assert_eq!(n2, 0, "buffer should be empty after first read");
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn shutdown_test_mode_drops_state() {
+        unsafe { init_test_mode(20, 5, std::ptr::null_mut()) };
+        shutdown_test_mode();
+        let guard = ENGINE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(guard.is_none());
     }
 
     #[test]

@@ -2,7 +2,7 @@
  * KittyUI React reconciler — createRoot / root.render() entry point.
  */
 
-import { type Container, hostConfig } from "./host-config.js";
+import { type Container, hostConfig, setActiveTree } from "./host-config.js";
 import { BoxRenderable } from "./renderables.js";
 import type { ReactNode } from "react";
 import ReactReconciler from "react-reconciler";
@@ -46,7 +46,9 @@ export interface KittyRoot {
  * ```
  */
 export const createRoot = (tree: RenderableTree): KittyRoot => {
+  setActiveTree(tree);
   const rootRenderable = new BoxRenderable();
+  rootRenderable.applyProps({ style: { width: process.stdout.columns || 80, height: process.stdout.rows || 24 } });
   tree.setRoot(rootRenderable);
 
   const container: Container = { root: rootRenderable, tree };

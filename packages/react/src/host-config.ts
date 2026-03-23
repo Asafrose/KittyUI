@@ -8,6 +8,18 @@ import { type BoxRenderable, type ImageRenderable, type KittyProps, type TextRen
 import type { RenderableTree } from "@kittyui/core";
 
 // ---------------------------------------------------------------------------
+// Active tree reference — set by createRoot so host-config callbacks can
+// register orphan nodes and wire parent-child relationships.
+// ---------------------------------------------------------------------------
+
+let activeTree: RenderableTree | undefined;
+
+/** Set the active RenderableTree for the reconciler. */
+export const setActiveTree = (tree: RenderableTree | undefined): void => {
+  activeTree = tree;
+};
+
+// ---------------------------------------------------------------------------
 // Type aliases for the host config generics
 // ---------------------------------------------------------------------------
 
@@ -63,8 +75,7 @@ export const hostConfig = {
   afterActiveInstanceBlur(): void {},
 
   appendChild(parentInstance: Instance, child: Instance | TextInstance): void {
-    void parentInstance;
-    void child;
+    activeTree?.appendChild(parentInstance.nodeId, child);
   },
 
   appendChildToContainer(container: Container, child: Instance | TextInstance): void {
@@ -72,8 +83,7 @@ export const hostConfig = {
   },
 
   appendInitialChild(parentInstance: Instance, child: Instance | TextInstance): void {
-    void parentInstance;
-    void child;
+    activeTree?.appendChild(parentInstance.nodeId, child);
   },
 
   beforeActiveInstanceBlur(): void {},
@@ -89,6 +99,11 @@ export const hostConfig = {
 
   commitTextUpdate(textInstance: TextInstance, _oldText: string, newText: string): void {
     textInstance.setText(newText);
+    // Auto-size text node to its content width.
+    textInstance.setNodeStyle({
+      height: { type: "cells", value: 1 },
+      width: { type: "cells", value: newText.length },
+    });
   },
 
   // eslint-disable-next-line max-params -- Required by react-reconciler API
@@ -99,12 +114,19 @@ export const hostConfig = {
   createInstance(type: Type, props: Props, _rootContainer: Container): Instance {
     const instance = createRenderableForType(type);
     instance.applyProps(props);
+    activeTree?.addOrphan(instance);
     return instance;
   },
 
   createTextInstance(text: string, _rootContainer: Container): TextInstance {
     const instance = createRenderableForType("text") as TextRenderable;
     instance.setText(text);
+    // Auto-size text node to its content width.
+    instance.setNodeStyle({
+      height: { type: "cells", value: 1 },
+      width: { type: "cells", value: text.length },
+    });
+    activeTree?.addOrphan(instance);
     return instance;
   },
 
@@ -149,9 +171,8 @@ export const hostConfig = {
     void textInstance;
   },
 
-  insertBefore(parentInstance: Instance, child: Instance | TextInstance, _beforeChild: Instance | TextInstance): void {
-    void parentInstance;
-    void child;
+  insertBefore(parentInstance: Instance, child: Instance | TextInstance, beforeChild: Instance | TextInstance): void {
+    activeTree?.insertBefore(parentInstance.nodeId, child, beforeChild.nodeId);
   },
 
   insertInContainerBefore(
@@ -186,9 +207,8 @@ export const hostConfig = {
 
   prepareScopeUpdate(): void {},
 
-  removeChild(parentInstance: Instance, child: Instance | TextInstance): void {
-    void parentInstance;
-    void child;
+  removeChild(_parentInstance: Instance, child: Instance | TextInstance): void {
+    activeTree?.remove(child.nodeId);
   },
 
   removeChildFromContainer(container: Container, child: Instance | TextInstance): void {

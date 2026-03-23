@@ -24,6 +24,19 @@ const MS_PER_SECOND = 1000;
 const CTRL_C = "\x03";
 const QUIT_KEY = "q";
 
+// Virtual key codes for special keys
+export const KEY_UP = 0x1001;
+export const KEY_DOWN = 0x1002;
+export const KEY_RIGHT = 0x1003;
+export const KEY_LEFT = 0x1004;
+
+const ESC_MAP: Record<string, number> = {
+  "\x1b[A": KEY_UP,
+  "\x1b[B": KEY_DOWN,
+  "\x1b[C": KEY_RIGHT,
+  "\x1b[D": KEY_LEFT,
+};
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -120,12 +133,11 @@ export const createApp = (
       return;
     }
 
-    // Push every byte as a key event and dispatch through the event dispatcher
-    for (let i = 0; i < key.length; i++) {
-      const keyCode = key.charCodeAt(i);
-      bridge.pushKeyEvent(keyCode, 0, 0);
-      dispatcher.handleStdinKeyEvent(keyCode, 0, 0);
-    }
+    // Map escape sequences to virtual key codes; single chars pass through.
+    const mapped = ESC_MAP[key];
+    const keyCode = mapped ?? (key.length === 1 ? key.charCodeAt(0) : key.charCodeAt(0));
+    bridge.pushKeyEvent(keyCode, 0, 0);
+    dispatcher.handleStdinKeyEvent(keyCode, 0, 0);
   };
 
   if (process.stdin.isTTY) {

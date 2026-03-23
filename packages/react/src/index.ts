@@ -5,7 +5,7 @@
 export { hello } from "@kittyui/core";
 export { createRoot, type KittyRoot } from "./reconciler.js";
 export { BoxRenderable, ImageRenderable, TextRenderable, createRenderableForType, type KittyProps } from "./renderables.js";
-export { createApp, type AppHandle, type AppOptions } from "./app.js";
+export { createApp, KEY_UP, KEY_DOWN, KEY_RIGHT, KEY_LEFT, type AppHandle, type AppOptions } from "./app.js";
 export { EventDispatcher } from "./event-dispatcher.js";
 export { TerminalContext, TerminalProvider, type TerminalContextValue } from "./context.js";
 

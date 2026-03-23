@@ -17,6 +17,121 @@ const OP_SET_STYLE = 5;
 const OP_SET_TEXT = 6;
 
 const INITIAL_CAPACITY = 4096;
+const PERCENT_DIVISOR = 100;
+
+// ---------------------------------------------------------------------------
+// Style preprocessing — flatten structured Dim / display objects for Rust
+// ---------------------------------------------------------------------------
+
+/** Resolve a Dim value to a plain number. */
+const resolveDim = (dim: unknown, termSize: number): number | undefined => {
+  if (dim === undefined || dim === null) return undefined;  // eslint-disable-line unicorn/no-null, eqeqeq, no-eq-null
+  if (typeof dim === "number") return dim;
+  if (typeof dim === "string") {
+    const trimmed = dim.trim();
+    if (trimmed.endsWith("%")) {
+      const pct = Number.parseFloat(trimmed);
+      if (!Number.isNaN(pct)) return Math.floor((pct / PERCENT_DIVISOR) * termSize);
+    }
+    const n = Number.parseFloat(trimmed);
+    if (!Number.isNaN(n)) return n;
+    return undefined;
+  }
+  if (typeof dim === "object") {
+    const d = dim as Record<string, unknown>;
+    if (d.type === "cells") return d.value as number;
+    if (d.type === "percent") {
+      return Math.floor(((d.value as number) / PERCENT_DIVISOR) * termSize);
+    }
+    if (d.type === "auto") return undefined;
+  }
+  return undefined;
+};
+
+/** Flatten a padding/margin/gap Dim array to a plain number or array of numbers. */
+const flattenDimArray = (arr: unknown, termSize: number): unknown => {
+  if (!Array.isArray(arr)) return resolveDim(arr, termSize);
+  return arr.map((item) => resolveDim(item, termSize) ?? 0);
+};
+
+/** Preprocess a style record so Rust receives only flat primitives. */
+const preprocessStyle = (style: Record<string, unknown>): Record<string, unknown> => {
+  const result: Record<string, unknown> = {};
+  const cols = (typeof process !== "undefined" && process.stdout?.columns) || 80;
+  const rows = (typeof process !== "undefined" && process.stdout?.rows) || 24;
+
+  for (const [key, value] of Object.entries(style)) {
+    if (value === undefined) continue;
+
+    switch (key) {
+      case "width":
+      case "minWidth":
+      case "maxWidth":
+      case "flexBasis": {
+        const resolved = resolveDim(value, cols);
+        if (resolved !== undefined) result[key] = resolved;
+        break;
+      }
+      case "height":
+      case "minHeight":
+      case "maxHeight": {
+        const resolved = resolveDim(value, rows);
+        if (resolved !== undefined) result[key] = resolved;
+        break;
+      }
+      case "padding":
+      case "margin": {
+        const flat = flattenDimArray(value, cols);
+        if (flat !== undefined) result[key] = flat;
+        break;
+      }
+      case "gap": {
+        const flat = flattenDimArray(value, cols);
+        if (flat !== undefined) result[key] = flat;
+        break;
+      }
+      case "display": {
+        // Extract flex/grid properties into top-level keys.
+        if (typeof value === "object" && value !== null) {  // eslint-disable-line unicorn/no-null, eqeqeq, no-eq-null
+          const d = value as Record<string, unknown>;
+          if (d.type === "flex" && typeof d.flex === "object" && d.flex !== null) {  // eslint-disable-line unicorn/no-null, eqeqeq, no-eq-null
+            const flex = d.flex as Record<string, unknown>;
+            if (flex.direction !== undefined) result.flexDirection = flex.direction;
+            if (flex.grow !== undefined) result.flexGrow = flex.grow;
+            if (flex.shrink !== undefined) result.flexShrink = flex.shrink;
+            if (flex.wrap !== undefined) result.flexWrap = flex.wrap;
+            if (flex.justify !== undefined) result.justifyContent = flex.justify;
+            if (flex.alignItems !== undefined) result.alignItems = flex.alignItems;
+            if (flex.basis !== undefined) {
+              const resolved = resolveDim(flex.basis, cols);
+              if (resolved !== undefined) result.flexBasis = resolved;
+            }
+          }
+        }
+        break;
+      }
+      case "backgroundColor":
+      case "color": {
+        // Pass through string values.
+        result[key] = value;
+        break;
+      }
+      case "flexGrow":
+      case "flexShrink":
+      case "flexDirection":
+      case "flexWrap":
+      case "justifyContent":
+      case "alignItems": {
+        result[key] = value;
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  return result;
+};
 
 export class MutationEncoder {
   private buffer: ArrayBuffer;
@@ -54,7 +169,7 @@ export class MutationEncoder {
   // -----------------------------------------------------------------------
 
   createNode(nodeId: number, style: Record<string, unknown>): void {
-    const jsonBytes = new TextEncoder().encode(JSON.stringify(style));
+    const jsonBytes = new TextEncoder().encode(JSON.stringify(preprocessStyle(style)));
     this.ensureCapacity(1 + 4 + 2 + jsonBytes.byteLength);
     this.writeU8(OP_CREATE_NODE);
     this.writeU32(nodeId);
@@ -84,7 +199,7 @@ export class MutationEncoder {
   }
 
   setStyle(nodeId: number, style: Record<string, unknown>): void {
-    const jsonBytes = new TextEncoder().encode(JSON.stringify(style));
+    const jsonBytes = new TextEncoder().encode(JSON.stringify(preprocessStyle(style)));
     this.ensureCapacity(1 + 4 + 2 + jsonBytes.byteLength);
     this.writeU8(OP_SET_STYLE);
     this.writeU32(nodeId);
