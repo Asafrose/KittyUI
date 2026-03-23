@@ -101,7 +101,7 @@ export interface BoxProps
 
 export interface TextProps {
   style?: CSSStyle;
-  children?: string;
+  children?: React.ReactNode;
   key?: React.Key;
   ref?: KittyRef<TextRenderable>;
 }

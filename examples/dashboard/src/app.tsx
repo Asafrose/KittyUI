@@ -7,7 +7,7 @@
  */
 
 import { useState, useEffect } from "react";
-import { useTerminal, useKeyboard, KEY_UP, KEY_DOWN } from "@kittyui/react";
+import { useTerminal, useKeyboard, KEY_UP, KEY_DOWN, Box, Text } from "@kittyui/react";
 
 // -----------------------------------------------------------------------
 // Navigation items
@@ -21,13 +21,13 @@ const NAV_ITEMS = ["Overview", "Metrics", "Logs", "Settings"] as const;
 
 function Header() {
   return (
-    <box style={{ width: "100%", height: 3, backgroundColor: "#1e40af" }}>
-      <box style={{ padding: [0, 2] }}>
-        <text style={{ color: "#ffffff", fontWeight: "bold" }}>
+    <Box style={{ width: "100%", height: 3, backgroundColor: "#1e40af" }}>
+      <Box style={{ padding: [0, 2] }}>
+        <Text style={{ color: "#ffffff", fontWeight: "bold" }}>
           {"  KittyUI Dashboard  "}
-        </text>
-      </box>
-    </box>
+        </Text>
+      </Box>
+    </Box>
   );
 }
 
@@ -39,7 +39,7 @@ function Sidebar({
   items: readonly string[];
 }) {
   return (
-    <box
+    <Box
       style={{
         width: 24,
         flexDirection: "column",
@@ -47,13 +47,13 @@ function Sidebar({
         paddingTop: 1,
       }}
     >
-      <box style={{ paddingLeft: 1, paddingBottom: 1 }}>
-        <text style={{ color: "#94a3b8", fontWeight: "bold" }}>
+      <Box style={{ paddingLeft: 1, paddingBottom: 1 }}>
+        <Text style={{ color: "#94a3b8", fontWeight: "bold" }}>
           {"  NAVIGATION"}
-        </text>
-      </box>
+        </Text>
+      </Box>
       {items.map((item: string, i: number) => (
-        <box
+        <Box
           key={item}
           style={{
             paddingLeft: 2,
@@ -62,7 +62,7 @@ function Sidebar({
             backgroundColor: i === activeIndex ? "#3b82f6" : "#1e293b",
           }}
         >
-          <text
+          <Text
             style={{
               color: i === activeIndex ? "#ffffff" : "#cbd5e1",
               fontWeight: i === activeIndex ? "bold" : "normal",
@@ -70,10 +70,10 @@ function Sidebar({
           >
             {i === activeIndex ? "> " : "  "}
             {item}
-          </text>
-        </box>
+          </Text>
+        </Box>
       ))}
-    </box>
+    </Box>
   );
 }
 
@@ -87,7 +87,7 @@ function StatsCard({
   color: string;
 }) {
   return (
-    <box
+    <Box
       style={{
         flexGrow: 1,
         height: 5,
@@ -97,31 +97,31 @@ function StatsCard({
         marginRight: 1,
       }}
     >
-      <text style={{ color: "#94a3b8" }}>{label}</text>
-      <text style={{ color, fontWeight: "bold" }}>{value}</text>
-    </box>
+      <Text style={{ color: "#94a3b8" }}>{label}</Text>
+      <Text style={{ color, fontWeight: "bold" }}>{value}</Text>
+    </Box>
   );
 }
 
 function OverviewContent({ uptime }: { uptime: number }) {
   return (
-    <box style={{ flexDirection: "column", flexGrow: 1, padding: 1 }}>
-      <box style={{ paddingBottom: 1 }}>
-        <text style={{ color: "#e2e8f0", fontWeight: "bold" }}>
+    <Box style={{ flexDirection: "column", flexGrow: 1, padding: 1 }}>
+      <Box style={{ paddingBottom: 1 }}>
+        <Text style={{ color: "#e2e8f0", fontWeight: "bold" }}>
           {"Overview"}
-        </text>
-      </box>
+        </Text>
+      </Box>
 
       {/* Stats row */}
-      <box style={{ flexDirection: "row", height: 5, paddingBottom: 1 }}>
+      <Box style={{ flexDirection: "row", height: 5, paddingBottom: 1 }}>
         <StatsCard label="Requests" value="12,847" color="#22c55e" />
         <StatsCard label="Errors" value="23" color="#ef4444" />
         <StatsCard label="Latency" value="42ms" color="#eab308" />
         <StatsCard label="Uptime" value={`${uptime}s`} color="#3b82f6" />
-      </box>
+      </Box>
 
       {/* Live counter */}
-      <box
+      <Box
         style={{
           height: 3,
           backgroundColor: "#1e293b",
@@ -129,44 +129,44 @@ function OverviewContent({ uptime }: { uptime: number }) {
           marginBottom: 1,
         }}
       >
-        <text style={{ color: "#22c55e" }}>
+        <Text style={{ color: "#22c55e" }}>
           {"Live uptime counter: " + String(uptime) + "s (updates every second)"}
-        </text>
-      </box>
+        </Text>
+      </Box>
 
       {/* Activity log */}
-      <box style={{ paddingBottom: 1 }}>
-        <text style={{ color: "#e2e8f0", fontWeight: "bold" }}>
+      <Box style={{ paddingBottom: 1 }}>
+        <Text style={{ color: "#e2e8f0", fontWeight: "bold" }}>
           {"Recent Activity"}
-        </text>
-      </box>
-      <box style={{ flexDirection: "column", backgroundColor: "#1e293b", padding: 1 }}>
-        <text style={{ color: "#22c55e" }}>{"[OK]  GET /api/health        200  2ms"}</text>
-        <text style={{ color: "#22c55e" }}>{"[OK]  POST /api/data         201  15ms"}</text>
-        <text style={{ color: "#eab308" }}>{"[WARN] GET /api/metrics      200  89ms"}</text>
-        <text style={{ color: "#ef4444" }}>{"[ERR]  GET /api/missing      404  3ms"}</text>
-        <text style={{ color: "#22c55e" }}>{"[OK]  GET /api/users         200  12ms"}</text>
-      </box>
-    </box>
+        </Text>
+      </Box>
+      <Box style={{ flexDirection: "column", backgroundColor: "#1e293b", padding: 1 }}>
+        <Text style={{ color: "#22c55e" }}>{"[OK]  GET /api/health        200  2ms"}</Text>
+        <Text style={{ color: "#22c55e" }}>{"[OK]  POST /api/data         201  15ms"}</Text>
+        <Text style={{ color: "#eab308" }}>{"[WARN] GET /api/metrics      200  89ms"}</Text>
+        <Text style={{ color: "#ef4444" }}>{"[ERR]  GET /api/missing      404  3ms"}</Text>
+        <Text style={{ color: "#22c55e" }}>{"[OK]  GET /api/users         200  12ms"}</Text>
+      </Box>
+    </Box>
   );
 }
 
 function PlaceholderContent({ title }: { title: string }) {
   return (
-    <box style={{ flexDirection: "column", flexGrow: 1, padding: 2 }}>
-      <text style={{ color: "#e2e8f0", fontWeight: "bold" }}>{title}</text>
-      <box style={{ paddingTop: 1 }}>
-        <text style={{ color: "#94a3b8" }}>
+    <Box style={{ flexDirection: "column", flexGrow: 1, padding: 2 }}>
+      <Text style={{ color: "#e2e8f0", fontWeight: "bold" }}>{title}</Text>
+      <Box style={{ paddingTop: 1 }}>
+        <Text style={{ color: "#94a3b8" }}>
           {title + " view coming soon..."}
-        </text>
-      </box>
-    </box>
+        </Text>
+      </Box>
+    </Box>
   );
 }
 
 function Footer({ cols, rows }: { cols: number; rows: number }) {
   return (
-    <box
+    <Box
       style={{
         width: "100%",
         height: 1,
@@ -177,13 +177,13 @@ function Footer({ cols, rows }: { cols: number; rows: number }) {
         paddingRight: 1,
       }}
     >
-      <text style={{ color: "#94a3b8" }}>
+      <Text style={{ color: "#94a3b8" }}>
         {"  \u2191/\u2193 navigate   q quit"}
-      </text>
-      <text style={{ color: "#22c55e" }}>
+      </Text>
+      <Text style={{ color: "#22c55e" }}>
         {"Connected  " + cols + "x" + rows}
-      </text>
-    </box>
+      </Text>
+    </Box>
   );
 }
 
@@ -242,7 +242,7 @@ export function App() {
   }
 
   return (
-    <box
+    <Box
       style={{
         flexDirection: "column",
         width: "100%",
@@ -254,15 +254,15 @@ export function App() {
       <Header />
 
       {/* Body: sidebar + content */}
-      <box style={{ flexDirection: "row", flexGrow: 1 }}>
+      <Box style={{ flexDirection: "row", flexGrow: 1 }}>
         <Sidebar activeIndex={activeIndex} items={NAV_ITEMS} />
-        <box style={{ flexGrow: 1, flexDirection: "column" }}>
+        <Box style={{ flexGrow: 1, flexDirection: "column" }}>
           {content}
-        </box>
-      </box>
+        </Box>
+      </Box>
 
       {/* Footer */}
       <Footer cols={cols} rows={rows} />
-    </box>
+    </Box>
   );
 }
