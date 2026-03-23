@@ -1,17 +1,5 @@
-/**
- * JSX intrinsic element declarations for KittyUI.
- *
- * The react-jsx TypeScript transform uses React.JSX (not global JSX),
- * so we augment the "react" module to add box, text, and image elements.
- */
-import type { CSSStyle } from "@kittyui/core";
-
-declare module "react" {
-  namespace JSX {
-    interface IntrinsicElements {
-      box: { style?: CSSStyle; key?: string | number; children?: React.ReactNode };
-      text: { style?: CSSStyle; key?: string | number; children?: React.ReactNode };
-      image: { style?: CSSStyle; src?: string; key?: string | number };
-    }
-  }
-}
+// Register KittyUI JSX elements for the react-jsx TypeScript transform.
+// This is required because React.JSX.IntrinsicElements needs module
+// augmentation that TypeScript can't auto-discover from dependencies.
+import type { BoxProps, TextProps, ImageProps } from "@kittyui/react";
+declare module "react" { namespace JSX { interface IntrinsicElements { box: BoxProps; text: TextProps; image: ImageProps } } }
