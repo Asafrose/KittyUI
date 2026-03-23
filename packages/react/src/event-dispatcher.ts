@@ -119,6 +119,9 @@ export class EventDispatcher {
     if (focusedNodeId !== null) {
       this.dispatchKeyboardToNode(focusedNodeId, handlerKey, kittyEvent);
     }
+
+    // Also broadcast as a raw KittyEvent so useKeyboard hook listeners fire.
+    this.bridge.notifyEventListeners([{ type: "keyboard" as const, keyCode, modifiers, eventType }]);
   }
 
   // -----------------------------------------------------------------------
