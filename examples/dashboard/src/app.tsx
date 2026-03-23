@@ -6,26 +6,14 @@
  * - useTerminal for terminal dimensions
  */
 
-import { useState, useEffect, useRef } from "react";
-import { useTerminal, useKeyboard } from "@kittyui/react";
+import { useState, useEffect } from "react";
+import { useTerminal, useKeyboard, KEY_UP, KEY_DOWN } from "@kittyui/react";
 
 // -----------------------------------------------------------------------
 // Navigation items
 // -----------------------------------------------------------------------
 
 const NAV_ITEMS = ["Overview", "Metrics", "Logs", "Settings"] as const;
-type NavItem = (typeof NAV_ITEMS)[number];
-
-// -----------------------------------------------------------------------
-// Escape sequence detection for arrow keys
-// Arrow up   = ESC [ A  (keyCodes: 27, 91, 65)
-// Arrow down = ESC [ B  (keyCodes: 27, 91, 66)
-// -----------------------------------------------------------------------
-
-const ESC = 27;
-const BRACKET = 91;
-const ARROW_UP_CHAR = 65; // 'A'
-const ARROW_DOWN_CHAR = 66; // 'B'
 
 // -----------------------------------------------------------------------
 // Sub-components
@@ -208,11 +196,6 @@ export function App() {
   const [uptime, setUptime] = useState(0);
   const { cols, rows } = useTerminal();
 
-  // Escape sequence buffer for detecting arrow keys.
-  // Arrow keys arrive as 3 sequential keyboard events: ESC, [, A/B
-  const escBuf = useRef<number[]>([]);
-  const escTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   // Live counter -- increments every second to prove re-rendering works
   useEffect(() => {
     const interval = setInterval(() => {
@@ -221,59 +204,21 @@ export function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Keyboard navigation
+  // Keyboard navigation — createApp sends KEY_UP/KEY_DOWN as mapped keyCodes
   useKeyboard(
     (event) => {
-      // The useKeyboard hook passes the raw core KeyboardEvent (with keyCode
-      // directly) even though it is typed as KittyKeyboardEvent. We cast to
-      // access the runtime shape.
       const raw = event as unknown as { keyCode: number };
       const keyCode = raw.keyCode ?? 0;
 
-      const buf = escBuf.current;
-
-      // Clear any pending escape timeout
-      if (escTimer.current) {
-        clearTimeout(escTimer.current);
-        escTimer.current = null;
+      if (keyCode === KEY_UP) {
+        setActiveIndex((prev: number) =>
+          prev > 0 ? prev - 1 : NAV_ITEMS.length - 1,
+        );
+      } else if (keyCode === KEY_DOWN) {
+        setActiveIndex((prev: number) =>
+          prev < NAV_ITEMS.length - 1 ? prev + 1 : 0,
+        );
       }
-
-      // Build up escape sequences: ESC [ A/B
-      if (keyCode === ESC) {
-        buf.length = 0;
-        buf.push(ESC);
-        escTimer.current = setTimeout(() => {
-          buf.length = 0;
-        }, 100);
-        return;
-      }
-
-      if (buf.length === 1 && buf[0] === ESC && keyCode === BRACKET) {
-        buf.push(BRACKET);
-        escTimer.current = setTimeout(() => {
-          buf.length = 0;
-        }, 100);
-        return;
-      }
-
-      if (buf.length === 2 && buf[0] === ESC && buf[1] === BRACKET) {
-        buf.length = 0;
-        if (keyCode === ARROW_UP_CHAR) {
-          setActiveIndex((prev: number) =>
-            prev > 0 ? prev - 1 : NAV_ITEMS.length - 1,
-          );
-          return;
-        }
-        if (keyCode === ARROW_DOWN_CHAR) {
-          setActiveIndex((prev: number) =>
-            prev < NAV_ITEMS.length - 1 ? prev + 1 : 0,
-          );
-          return;
-        }
-      }
-
-      // Reset buffer for any non-sequence key
-      buf.length = 0;
     },
     { global: true },
   );
