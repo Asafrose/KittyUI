@@ -50,6 +50,14 @@ enum TextOverflow {
     Ellipsis,
 }
 
+/// Overflow clipping mode for a node.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Overflow {
+    #[default]
+    Visible,
+    Hidden,
+}
+
 /// Visual (non-layout) style properties for a node.
 #[derive(Clone, Debug, Default)]
 struct NodeVisualStyle {
@@ -63,6 +71,8 @@ struct NodeVisualStyle {
     italic: bool,
     /// Text overflow behaviour.
     text_overflow: TextOverflow,
+    /// Overflow clipping mode.
+    overflow: Overflow,
 }
 
 // ---------------------------------------------------------------------------
@@ -571,6 +581,12 @@ fn parse_visual_style_json(json: &[u8]) -> NodeVisualStyle {
             _ => TextOverflow::Clip,
         };
     }
+    if let Some(ov) = json_extract_str(s, "overflow") {
+        vs.overflow = match ov {
+            "hidden" => Overflow::Hidden,
+            _ => Overflow::Visible,
+        };
+    }
     vs
 }
 
@@ -814,6 +830,7 @@ fn paint_node(
     inherited_fg: Option<Color>,
     inherited_bold: bool,
     inherited_italic: bool,
+    clip_rect: Option<(f32, f32, f32, f32)>,
 ) {
     let Some(&layout_id) = state.node_map.get(&node_id) else {
         return;
@@ -847,6 +864,17 @@ fn paint_node(
         }
     });
 
+    /// Check whether a cell at (row, col) is inside the active clip rectangle.
+    fn in_clip(row: usize, col: usize, clip: Option<(f32, f32, f32, f32)>) -> bool {
+        if let Some((cx, cy, cw, ch)) = clip {
+            let col_f = col as f32;
+            let row_f = row as f32;
+            col_f >= cx && col_f < cx + cw && row_f >= cy && row_f < cy + ch
+        } else {
+            true
+        }
+    }
+
     // Paint background only if we have an explicit bg color (own or inherited).
     if resolved_bg.is_some() {
         let cell_style = CellStyle {
@@ -858,6 +886,9 @@ fn paint_node(
         };
         for row in y0..y0 + h {
             for col in x0..x0 + w {
+                if !in_clip(row, col, clip_rect) {
+                    continue;
+                }
                 if let Some(cell) = back.get_mut(row, col) {
                     cell.ch = ' ';
                     cell.style = cell_style;
@@ -883,6 +914,9 @@ fn paint_node(
                     break;
                 }
                 if y0 < back.height() {
+                    if !in_clip(y0, c, clip_rect) {
+                        continue;
+                    }
                     if let Some(cell) = back.get_mut(y0, c) {
                         cell.ch = ch;
                         cell.style.bold = resolved_bold;
@@ -916,6 +950,15 @@ fn paint_node(
         }
     }
 
+    // Determine the clip rect for children.
+    let own_overflow = vs.map_or(Overflow::Visible, |v| v.overflow);
+    let child_clip = if own_overflow == Overflow::Hidden {
+        let own_rect = (abs_x, abs_y, cl.width, cl.height);
+        Some(intersect_clip(clip_rect, own_rect))
+    } else {
+        clip_rect
+    };
+
     // Recurse into children.
     if let Ok(children) = state.layout.children(layout_id) {
         for child_lid in children {
@@ -930,9 +973,26 @@ fn paint_node(
                     resolved_fg,
                     resolved_bold,
                     resolved_italic,
+                    child_clip,
                 );
             }
         }
+    }
+}
+
+/// Intersect an optional inherited clip rect with a new rect.
+fn intersect_clip(
+    inherited: Option<(f32, f32, f32, f32)>,
+    rect: (f32, f32, f32, f32),
+) -> (f32, f32, f32, f32) {
+    if let Some((ix, iy, iw, ih)) = inherited {
+        let x0 = ix.max(rect.0);
+        let y0 = iy.max(rect.1);
+        let x1 = (ix + iw).min(rect.0 + rect.2);
+        let y1 = (iy + ih).min(rect.1 + rect.3);
+        (x0, y0, (x1 - x0).max(0.0), (y1 - y0).max(0.0))
+    } else {
+        rect
     }
 }
 
@@ -986,6 +1046,7 @@ pub extern "C" fn render_frame() {
                     None,
                     false,
                     false,
+                    None,
                 );
 
                 // Swap the painted buffer back.
@@ -2395,6 +2456,57 @@ mod tests {
             assert_eq!(back.get(0, 0).unwrap().ch, 'H');
             assert_eq!(back.get(0, 1).unwrap().ch, 'i');
             assert_eq!(back.get(0, 2).unwrap().ch, ' ');
+        });
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn overflow_hidden_clips_child_background() {
+        setup();
+
+        let buf = encode_create_node(
+            1,
+            r#"{"width":10,"height":1,"overflow":"hidden"}"#,
+        );
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        let buf = encode_create_node(
+            2,
+            r##"{"width":20,"height":1,"backgroundColor":"#ff0000","flexShrink":0}"##,
+        );
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        let buf = encode_append_child(1, 2);
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        with_engine(|state| {
+            state.root_node = Some(1);
+            state.dirty = true;
+        });
+
+        render_frame();
+
+        with_engine(|state| {
+            let back = state.double_buf.back();
+            for col in 0..10 {
+                let cell = back.get(0, col).unwrap();
+                assert_eq!(
+                    cell.style.bg,
+                    Some(crate::ansi::Color::Rgb(255, 0, 0)),
+                    "cell at col {col} should have red bg"
+                );
+            }
+            for col in 10..20 {
+                if let Some(cell) = back.get(0, col) {
+                    assert_ne!(
+                        cell.style.bg,
+                        Some(crate::ansi::Color::Rgb(255, 0, 0)),
+                        "cell at col {col} should NOT have red bg (clipped)"
+                    );
+                }
+            }
         });
 
         teardown();

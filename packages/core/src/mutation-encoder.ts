@@ -124,7 +124,8 @@ const preprocessStyle = (style: Record<string, unknown>, overrideCols?: number, 
       case "alignItems":
       case "bold":
       case "italic":
-      case "textOverflow": {
+      case "textOverflow":
+      case "overflow": {
         result[key] = value;
         break;
       }
