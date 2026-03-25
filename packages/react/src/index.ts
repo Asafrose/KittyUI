@@ -22,6 +22,7 @@ export {
 
 // Components
 export { Box, Text, Image } from "./components.js";
+export { TextInput, type TextInputProps } from "./text-input.js";
 
 // JSX prop and event types
 export type {
