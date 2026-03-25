@@ -68,6 +68,7 @@ export interface TextStyle {
   reverse?: boolean | undefined;
   strikethrough?: boolean | undefined;
   overline?: boolean | undefined;
+  textOverflow?: "clip" | "ellipsis" | undefined;
 }
 
 // ---------------------------------------------------------------------------

@@ -40,6 +40,16 @@ const EVENT_BLUR: u8 = 5;
 // Visual style — bg/fg colors per node (separate from layout style)
 // ---------------------------------------------------------------------------
 
+/// How text overflows its container.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum TextOverflow {
+    /// Truncate text at the container boundary (default).
+    #[default]
+    Clip,
+    /// Truncate and show an ellipsis at the end.
+    Ellipsis,
+}
+
 /// Visual (non-layout) style properties for a node.
 #[derive(Clone, Debug, Default)]
 struct NodeVisualStyle {
@@ -51,6 +61,8 @@ struct NodeVisualStyle {
     bold: bool,
     /// Italic text.
     italic: bool,
+    /// Text overflow behaviour.
+    text_overflow: TextOverflow,
 }
 
 // ---------------------------------------------------------------------------
@@ -553,6 +565,12 @@ fn parse_visual_style_json(json: &[u8]) -> NodeVisualStyle {
     if let Some(i) = json_extract_bool(s, "italic") {
         vs.italic = i;
     }
+    if let Some(to) = json_extract_str(s, "textOverflow") {
+        vs.text_overflow = match to {
+            "ellipsis" => TextOverflow::Ellipsis,
+            _ => TextOverflow::Clip,
+        };
+    }
     vs
 }
 
@@ -848,9 +866,18 @@ fn paint_node(
     }
 
     // Paint text content — use resolved colours and text attributes.
+    // Respect text_overflow: Clip stops at boundary, Ellipsis places an ellipsis at the end.
+    let text_overflow = vs.map_or(TextOverflow::Clip, |v| v.text_overflow);
     if let Some(text) = state.text_content.get(&node_id) {
-        if !text.is_empty() {
+        if !text.is_empty() && w > 0 {
+            let char_count = text.chars().count();
+            let needs_ellipsis =
+                text_overflow == TextOverflow::Ellipsis && char_count > w;
+            let paint_limit = if needs_ellipsis { w - 1 } else { w };
             for (i, ch) in text.chars().enumerate() {
+                if i >= paint_limit {
+                    break;
+                }
                 let c = x0 + i;
                 if c >= back.width() {
                     break;
@@ -858,6 +885,23 @@ fn paint_node(
                 if y0 < back.height() {
                     if let Some(cell) = back.get_mut(y0, c) {
                         cell.ch = ch;
+                        cell.style.bold = resolved_bold;
+                        cell.style.italic = resolved_italic;
+                        if let Some(fg) = resolved_fg {
+                            cell.style.fg = Some(fg);
+                        }
+                        if let Some(bg) = resolved_bg {
+                            cell.style.bg = Some(bg);
+                        }
+                    }
+                }
+            }
+            // Place ellipsis character at the last position.
+            if needs_ellipsis {
+                let c = x0 + paint_limit;
+                if c < back.width() && y0 < back.height() {
+                    if let Some(cell) = back.get_mut(y0, c) {
+                        cell.ch = '\u{2026}'; // ellipsis
                         cell.style.bold = resolved_bold;
                         cell.style.italic = resolved_italic;
                         if let Some(fg) = resolved_fg {
@@ -2295,6 +2339,62 @@ mod tests {
         with_engine(|state| {
             assert_eq!(state.double_buf.width(), 40);
             assert_eq!(state.double_buf.height(), 10);
+        });
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn text_ellipsis_truncates_with_ellipsis_char() {
+        setup();
+
+        let mut buf = encode_create_node(1, r#"{"width":80,"height":24,"flexDirection":"column"}"#);
+        buf.extend(encode_create_node(
+            2,
+            r#"{"width":8,"height":1,"textOverflow":"ellipsis"}"#,
+        ));
+        buf.extend(encode_append_child(1, 2));
+        buf.extend(encode_set_text(2, "Hello World"));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        render_frame();
+
+        with_engine(|state| {
+            let back = state.double_buf.back();
+            let mut rendered = String::new();
+            for col in 0..8 {
+                if let Some(cell) = back.get(0, col) {
+                    rendered.push(cell.ch);
+                }
+            }
+            assert_eq!(rendered, "Hello W\u{2026}");
+        });
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn text_that_fits_is_not_ellipsized() {
+        setup();
+
+        let mut buf = encode_create_node(1, r#"{"width":80,"height":24,"flexDirection":"column"}"#);
+        buf.extend(encode_create_node(
+            2,
+            r#"{"width":8,"height":1,"textOverflow":"ellipsis"}"#,
+        ));
+        buf.extend(encode_append_child(1, 2));
+        buf.extend(encode_set_text(2, "Hi"));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        render_frame();
+
+        with_engine(|state| {
+            let back = state.double_buf.back();
+            assert_eq!(back.get(0, 0).unwrap().ch, 'H');
+            assert_eq!(back.get(0, 1).unwrap().ch, 'i');
+            assert_eq!(back.get(0, 2).unwrap().ch, ' ');
         });
 
         teardown();
