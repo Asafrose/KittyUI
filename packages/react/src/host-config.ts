@@ -4,8 +4,8 @@
  * Maps React's tree operations to mutations on a RenderableTree.
  */
 
+import type { EncodedTextSpan, RenderableTree, RgbColor } from "@kittyui/core";
 import { type BoxRenderable, type ImageRenderable, type KittyProps, type TextRenderable, createRenderableForType } from "./renderables.js";
-import type { RenderableTree } from "@kittyui/core";
 
 // ---------------------------------------------------------------------------
 // Active tree reference — set by createRoot so host-config callbacks can
@@ -68,6 +68,62 @@ const applyCommitUpdate = ({ instance, nextProps }: CommitUpdateArgs): void => {
 };
 
 // ---------------------------------------------------------------------------
+// Inline span tracking — maps parent Text node IDs to their inline children
+// so we can rebuild concatenated text + color spans.
+// ---------------------------------------------------------------------------
+
+interface InlineChild {
+  instance: TextRenderable;
+  text: string;
+}
+
+const inlineChildren = new Map<number, InlineChild[]>();
+
+/** Track instances created via createTextInstance (raw strings, not <text> JSX elements). */
+const rawTextInstances = new WeakSet<TextRenderable>();
+
+const isTextRenderable = (inst: BoxRenderable | ImageRenderable | TextRenderable): inst is TextRenderable =>
+  inst.type === "text";
+
+const extractRgb = (color: RgbColor): { r: number; g: number; b: number } => ({
+  b: color.b,
+  g: color.g,
+  r: color.r,
+});
+
+const rebuildInlineSpans = (parent: TextRenderable): void => {
+  const children = inlineChildren.get(parent.nodeId);
+  if (!children || children.length === 0) {
+    parent.setText(undefined);
+    parent.setColorSpans([]);
+    parent.setNodeStyle({});
+    return;
+  }
+
+  let concatenated = "";
+  const spans: EncodedTextSpan[] = [];
+
+  for (const child of children) {
+    const start = concatenated.length;
+    concatenated += child.text;
+    const end = concatenated.length;
+
+    const fg = child.instance.textStyle.fg;
+    if (fg && fg.type === "rgb") {
+      const { r, g, b } = extractRgb(fg);
+      spans.push({ b, end, g, r, start });
+    }
+  }
+
+  parent.setText(concatenated);
+  parent.setColorSpans(spans);
+  parent.setNodeStyle({
+    height: { type: "cells", value: 1 },
+    width: { type: "cells", value: concatenated.length },
+  });
+};
+
+// ---------------------------------------------------------------------------
 // Host config
 // ---------------------------------------------------------------------------
 
@@ -75,6 +131,15 @@ export const hostConfig = {
   afterActiveInstanceBlur(): void {},
 
   appendChild(parentInstance: Instance, child: Instance | TextInstance): void {
+    if (isTextRenderable(parentInstance) && isTextRenderable(child) && !rawTextInstances.has(child)) {
+      const childText = child.text ?? "";
+      if (!inlineChildren.has(parentInstance.nodeId)) {
+        inlineChildren.set(parentInstance.nodeId, []);
+      }
+      inlineChildren.get(parentInstance.nodeId)!.push({ instance: child, text: childText });
+      rebuildInlineSpans(parentInstance);
+      return;
+    }
     activeTree?.appendChild(parentInstance.nodeId, child);
   },
 
@@ -83,6 +148,15 @@ export const hostConfig = {
   },
 
   appendInitialChild(parentInstance: Instance, child: Instance | TextInstance): void {
+    if (isTextRenderable(parentInstance) && isTextRenderable(child) && !rawTextInstances.has(child)) {
+      const childText = child.text ?? "";
+      if (!inlineChildren.has(parentInstance.nodeId)) {
+        inlineChildren.set(parentInstance.nodeId, []);
+      }
+      inlineChildren.get(parentInstance.nodeId)!.push({ instance: child, text: childText });
+      rebuildInlineSpans(parentInstance);
+      return;
+    }
     activeTree?.appendChild(parentInstance.nodeId, child);
   },
 
@@ -99,7 +173,21 @@ export const hostConfig = {
 
   commitTextUpdate(textInstance: TextInstance, _oldText: string, newText: string): void {
     textInstance.setText(newText);
-    // Auto-size text node to its content width.
+
+    // Check if this text instance is an inline child of a Text parent.
+    for (const [parentId, children] of inlineChildren) {
+      const entry = children.find((c) => c.instance.nodeId === textInstance.nodeId);
+      if (entry) {
+        entry.text = newText;
+        const parentRenderable = activeTree?.get(parentId) as TextRenderable | undefined;
+        if (parentRenderable) {
+          rebuildInlineSpans(parentRenderable);
+        }
+        return;
+      }
+    }
+
+    // Not an inline child — normal text node, auto-size.
     textInstance.setNodeStyle({
       height: { type: "cells", value: 1 },
       width: { type: "cells", value: newText.length },
@@ -121,11 +209,11 @@ export const hostConfig = {
   createTextInstance(text: string, _rootContainer: Container): TextInstance {
     const instance = createRenderableForType("text") as TextRenderable;
     instance.setText(text);
-    // Auto-size text node to its content width.
     instance.setNodeStyle({
       height: { type: "cells", value: 1 },
       width: { type: "cells", value: text.length },
     });
+    rawTextInstances.add(instance);
     activeTree?.addOrphan(instance);
     return instance;
   },

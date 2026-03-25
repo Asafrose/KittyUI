@@ -9,6 +9,7 @@ import { lib } from "./ffi.js";
 export { nativeAvailable } from "./ffi.js";
 
 export { MutationEncoder } from "./mutation-encoder.js";
+export type { EncodedTextSpan } from "./mutation-encoder.js";
 export { EventDecoder } from "./event-decoder.js";
 export type {
   KittyEvent,

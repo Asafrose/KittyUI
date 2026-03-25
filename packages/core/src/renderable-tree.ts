@@ -238,6 +238,9 @@ export class RenderableTree {
         if (node.renderable.text !== undefined) {
           this.encoder.setText(node.renderable.nodeId, node.renderable.text);
         }
+        if (node.renderable.colorSpans.length > 0) {
+          this.encoder.setTextSpans(node.renderable.nodeId, node.renderable.colorSpans);
+        }
         node.renderable.clearDirty();
       }
     }

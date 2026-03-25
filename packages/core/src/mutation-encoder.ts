@@ -15,6 +15,18 @@ const OP_APPEND_CHILD = 3;
 const OP_INSERT_BEFORE = 4;
 const OP_SET_STYLE = 5;
 const OP_SET_TEXT = 6;
+const OP_SET_TEXT_SPANS = 7;
+
+/** A single color span for setTextSpans. */
+export interface EncodedTextSpan {
+  start: number;
+  end: number;
+  r: number;
+  g: number;
+  b: number;
+}
+
+const BYTES_PER_SPAN = 7;
 
 const INITIAL_CAPACITY = 4096;
 const PERCENT_DIVISOR = 100;
@@ -237,6 +249,27 @@ export class MutationEncoder {
     this.writeU32(nodeId);
     this.writeU16(textBytes.byteLength);
     this.writeBytes(textBytes);
+  }
+
+  /**
+   * Send per-span fg color data for a text node.
+   *
+   * Binary format:
+   *   [OP_SET_TEXT_SPANS:u8][node_id:u32][span_count:u16]
+   *   per span: [start:u16][end:u16][r:u8][g:u8][b:u8]
+   */
+  setTextSpans(nodeId: number, spans: readonly EncodedTextSpan[]): void {
+    this.ensureCapacity(1 + 4 + 2 + spans.length * BYTES_PER_SPAN);
+    this.writeU8(OP_SET_TEXT_SPANS);
+    this.writeU32(nodeId);
+    this.writeU16(spans.length);
+    for (const span of spans) {
+      this.writeU16(span.start);
+      this.writeU16(span.end);
+      this.writeU8(span.r);
+      this.writeU8(span.g);
+      this.writeU8(span.b);
+    }
   }
 
   // -----------------------------------------------------------------------
