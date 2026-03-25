@@ -328,4 +328,27 @@ describe.skipIf(!canRun)("E2E smoke tests", () => {
 
     bridge.shutdown();
   });
+
+  // =========================================================================
+  // Border rendering
+  // =========================================================================
+
+  test("border style passes through pipeline without error", () => {
+    const bridge = new Bridge();
+    bridge.init();
+
+    const enc = bridge.getEncoder();
+    enc.createNode(1, { width: 80, height: 24, flexDirection: "column" });
+    enc.createNode(2, { width: 10, height: 5, border: "round", borderColor: "#FF0000" });
+    enc.appendChild(1, 2);
+    bridge.flushMutations();
+    bridge.renderFrame();
+
+    // Verify layout still works with border styles.
+    const layout = bridge.getLayout(2);
+    expect(layout.width).toBeCloseTo(10, 5);
+    expect(layout.height).toBeCloseTo(5, 5);
+
+    bridge.shutdown();
+  });
 });

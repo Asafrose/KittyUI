@@ -59,6 +59,52 @@ enum Overflow {
     Hidden,
 }
 
+/// Border preset — determines which Unicode box-drawing characters to use.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BorderPreset {
+    Single,
+    Round,
+    Double,
+    Bold,
+}
+
+impl BorderPreset {
+    /// Returns (tl, tr, bl, br, horizontal, vertical) box-drawing characters.
+    const fn chars(self) -> (char, char, char, char, char, char) {
+        match self {
+            Self::Single => (
+                '\u{250c}', '\u{2510}', '\u{2514}', '\u{2518}', '\u{2500}', '\u{2502}',
+            ),
+            Self::Round => (
+                '\u{256d}', '\u{256e}', '\u{2570}', '\u{256f}', '\u{2500}', '\u{2502}',
+            ),
+            Self::Double => (
+                '\u{2554}', '\u{2557}', '\u{255a}', '\u{255d}', '\u{2550}', '\u{2551}',
+            ),
+            Self::Bold => (
+                '\u{250f}', '\u{2513}', '\u{2517}', '\u{251b}', '\u{2501}', '\u{2503}',
+            ),
+        }
+    }
+
+    fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "single" => Some(Self::Single),
+            "round" => Some(Self::Round),
+            "double" => Some(Self::Double),
+            "bold" => Some(Self::Bold),
+            _ => None,
+        }
+    }
+}
+
+/// Border style for a node.
+#[derive(Clone, Debug)]
+struct BorderStyle {
+    preset: BorderPreset,
+    color: Option<Color>,
+}
+
 /// Visual (non-layout) style properties for a node.
 #[derive(Clone, Debug, Default)]
 struct NodeVisualStyle {
@@ -74,6 +120,8 @@ struct NodeVisualStyle {
     text_overflow: TextOverflow,
     /// Overflow clipping mode.
     overflow: Overflow,
+    /// Border style.
+    border: Option<BorderStyle>,
 }
 
 // ---------------------------------------------------------------------------
@@ -602,6 +650,12 @@ fn parse_visual_style_json(json: &[u8]) -> NodeVisualStyle {
             _ => Overflow::Visible,
         };
     }
+    if let Some(border_str) = json_extract_str(s, "border") {
+        if let Some(preset) = BorderPreset::from_str(border_str) {
+            let color = json_extract_str(s, "borderColor").and_then(parse_hex_color);
+            vs.border = Some(BorderStyle { preset, color });
+        }
+    }
     vs
 }
 
@@ -948,6 +1002,60 @@ fn paint_node(
                 if let Some(cell) = back.get_mut(row, col) {
                     cell.ch = ' ';
                     cell.style = cell_style;
+                }
+            }
+        }
+    }
+
+    // Paint border if present.
+    if let Some(border) = vs.and_then(|v| v.border.as_ref()) {
+        if w >= 2 && h >= 2 {
+            let (tl, tr, bl, br, horiz, vert) = border.preset.chars();
+            let border_style = CellStyle {
+                fg: border.color.or(resolved_fg),
+                bg: inherited_bg,
+                ..CellStyle::new()
+            };
+
+            // Corners
+            if let Some(cell) = back.get_mut(y0, x0) {
+                cell.ch = tl;
+                cell.style = border_style;
+            }
+            if let Some(cell) = back.get_mut(y0, x0 + w - 1) {
+                cell.ch = tr;
+                cell.style = border_style;
+            }
+            if let Some(cell) = back.get_mut(y0 + h - 1, x0) {
+                cell.ch = bl;
+                cell.style = border_style;
+            }
+            if let Some(cell) = back.get_mut(y0 + h - 1, x0 + w - 1) {
+                cell.ch = br;
+                cell.style = border_style;
+            }
+
+            // Horizontal edges (top and bottom)
+            for col in (x0 + 1)..(x0 + w - 1) {
+                if let Some(cell) = back.get_mut(y0, col) {
+                    cell.ch = horiz;
+                    cell.style = border_style;
+                }
+                if let Some(cell) = back.get_mut(y0 + h - 1, col) {
+                    cell.ch = horiz;
+                    cell.style = border_style;
+                }
+            }
+
+            // Vertical edges (left and right)
+            for row in (y0 + 1)..(y0 + h - 1) {
+                if let Some(cell) = back.get_mut(row, x0) {
+                    cell.ch = vert;
+                    cell.style = border_style;
+                }
+                if let Some(cell) = back.get_mut(row, x0 + w - 1) {
+                    cell.ch = vert;
+                    cell.style = border_style;
                 }
             }
         }
@@ -2566,6 +2674,75 @@ mod tests {
                     );
                 }
             }
+        });
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn border_round_produces_corners() {
+        setup();
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(
+            1,
+            r#"{"width":80,"height":24,"flexDirection":"column"}"#,
+        ));
+        buf.extend(encode_create_node(
+            2,
+            r##"{"width":10,"height":5,"border":"round","borderColor":"#FF0000"}"##,
+        ));
+        buf.extend(encode_append_child(1, 2));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        render_frame();
+
+        // Check the back buffer for border characters.
+        with_engine(|state| {
+            let back = state.double_buf.back();
+            // Top-left corner: round = ╭
+            assert_eq!(
+                back.get(0, 0).map(|c| c.ch),
+                Some('\u{256d}'),
+                "top-left should be ╭"
+            );
+            // Top-right corner: round = ╮
+            assert_eq!(
+                back.get(0, 9).map(|c| c.ch),
+                Some('\u{256e}'),
+                "top-right should be ╮"
+            );
+            // Bottom-left corner: round = ╰
+            assert_eq!(
+                back.get(4, 0).map(|c| c.ch),
+                Some('\u{2570}'),
+                "bottom-left should be ╰"
+            );
+            // Bottom-right corner: round = ╯
+            assert_eq!(
+                back.get(4, 9).map(|c| c.ch),
+                Some('\u{256f}'),
+                "bottom-right should be ╯"
+            );
+            // Top edge: ─
+            assert_eq!(
+                back.get(0, 1).map(|c| c.ch),
+                Some('\u{2500}'),
+                "top edge should be ─"
+            );
+            // Left edge: │
+            assert_eq!(
+                back.get(1, 0).map(|c| c.ch),
+                Some('\u{2502}'),
+                "left edge should be │"
+            );
+            // Border color should be red fg.
+            let corner_style = &back.get(0, 0).unwrap().style;
+            assert_eq!(
+                corner_style.fg,
+                Some(Color::Rgb(255, 0, 0)),
+                "border fg should be red"
+            );
         });
 
         teardown();
