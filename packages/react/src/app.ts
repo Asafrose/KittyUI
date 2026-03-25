@@ -24,6 +24,14 @@ const MS_PER_SECOND = 1000;
 const CTRL_C = "\x03";
 const QUIT_KEY = "q";
 
+// Terminal mouse tracking escape sequences (SGR mode)
+const MOUSE_ENABLE = "\x1b[?1000h\x1b[?1006h\x1b[?1003h";
+const MOUSE_DISABLE = "\x1b[?1003l\x1b[?1006l\x1b[?1000l";
+
+// SGR mouse sequence regex
+// oxlint-disable-next-line no-control-regex
+const SGR_MOUSE_RE = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/;
+
 // Virtual key codes for special keys
 export const KEY_UP = 0x1001;
 export const KEY_DOWN = 0x1002;
@@ -35,6 +43,34 @@ const ESC_MAP: Record<string, number> = {
   "\x1b[B": KEY_DOWN,
   "\x1b[C": KEY_RIGHT,
   "\x1b[D": KEY_LEFT,
+};
+
+// ---------------------------------------------------------------------------
+// SGR mouse parser (exported for testing)
+// ---------------------------------------------------------------------------
+
+/** Parsed SGR mouse event. */
+export interface SgrMouseEvent {
+  button: number;
+  col: number;
+  row: number;
+  isRelease: boolean;
+}
+
+/**
+ * Parse an SGR mouse escape sequence into its components.
+ * Returns null if the input is not a valid SGR mouse sequence.
+ */
+export const parseSgrMouse = (input: string): SgrMouseEvent | null => {
+  if (!input.startsWith("\x1b[<")) return null;
+  const match = input.match(SGR_MOUSE_RE);
+  if (!match) return null;
+  return {
+    button: parseInt(match[1]),
+    col: parseInt(match[2]) - 1,
+    row: parseInt(match[3]) - 1,
+    isRelease: match[4] === "m",
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -80,6 +116,9 @@ export const createApp = (
   // -----------------------------------------------------------------------
   const bridge = new Bridge();
   const initResult = bridge.init();
+
+  // Enable mouse tracking (SGR mode with move events)
+  process.stdout.write(MOUSE_ENABLE);
 
   // Set viewport to actual terminal size
   const termCols = process.stdout.columns || DEFAULT_COLS;
@@ -135,6 +174,14 @@ export const createApp = (
     // Ctrl+C or 'q' triggers graceful shutdown
     if (key === CTRL_C || key === QUIT_KEY) {
       shutdown();
+      return;
+    }
+
+    // Detect SGR mouse sequences
+    const mouse = parseSgrMouse(key);
+    if (mouse) {
+      bridge.pushMouseEvent(mouse.button, mouse.col, mouse.row, 0, 0, 0);
+      dispatcher.handleMouseFromStdin(mouse.button, mouse.col, mouse.row, mouse.isRelease);
       return;
     }
 
@@ -205,6 +252,9 @@ export const createApp = (
       process.stdin.setRawMode(false);
       process.stdin.pause();
     }
+
+    // Disable mouse tracking
+    process.stdout.write(MOUSE_DISABLE);
 
     // Remove listeners
     process.stdout.off("resize", resizeHandler);

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { nativeAvailable } from "@kittyui/core";
-import { createApp, type AppHandle, type AppOptions } from "./app.js";
+import { createApp, parseSgrMouse, type AppHandle, type AppOptions } from "./app.js";
 import { TerminalContext, TerminalProvider, type TerminalContextValue } from "./context.js";
 
 // ---------------------------------------------------------------------------
@@ -29,6 +29,67 @@ describe("createApp exports", () => {
   test("AppOptions is optional (all fields optional)", () => {
     const opts: AppOptions = {};
     expect(opts).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SGR mouse sequence parser
+// ---------------------------------------------------------------------------
+
+describe("parseSgrMouse", () => {
+  test("parses left button press", () => {
+    const result = parseSgrMouse("[<0;10;20M");
+    expect(result).not.toBeNull();
+    expect(result!.button).toBe(0);
+    expect(result!.col).toBe(9);  // 10 - 1 (1-based to 0-based)
+    expect(result!.row).toBe(19); // 20 - 1
+    expect(result!.isRelease).toBe(false);
+  });
+
+  test("parses button release (lowercase m)", () => {
+    const result = parseSgrMouse("[<0;5;8m");
+    expect(result).not.toBeNull();
+    expect(result!.button).toBe(0);
+    expect(result!.col).toBe(4);
+    expect(result!.row).toBe(7);
+    expect(result!.isRelease).toBe(true);
+  });
+
+  test("parses mouse move (button 35)", () => {
+    const result = parseSgrMouse("[<35;50;30M");
+    expect(result).not.toBeNull();
+    expect(result!.button).toBe(35);
+    expect(result!.col).toBe(49);
+    expect(result!.row).toBe(29);
+    expect(result!.isRelease).toBe(false);
+  });
+
+  test("parses scroll up (button 64)", () => {
+    const result = parseSgrMouse("[<64;1;1M");
+    expect(result).not.toBeNull();
+    expect(result!.button).toBe(64);
+    expect(result!.col).toBe(0);
+    expect(result!.row).toBe(0);
+  });
+
+  test("parses scroll down (button 65)", () => {
+    const result = parseSgrMouse("[<65;1;1M");
+    expect(result).not.toBeNull();
+    expect(result!.button).toBe(65);
+  });
+
+  test("returns null for non-mouse sequences", () => {
+    expect(parseSgrMouse("[A")).toBeNull();       // arrow key
+    expect(parseSgrMouse("hello")).toBeNull();         // plain text
+    expect(parseSgrMouse("[<invalid")).toBeNull(); // malformed
+    expect(parseSgrMouse("")).toBeNull();              // empty
+  });
+
+  test("handles large coordinates", () => {
+    const result = parseSgrMouse("[<0;200;100M");
+    expect(result).not.toBeNull();
+    expect(result!.col).toBe(199);
+    expect(result!.row).toBe(99);
   });
 });
 

@@ -67,7 +67,7 @@ export class EventDispatcher {
 
   /**
    * Handle a batch of events from the Rust engine.
-   * Register this with `bridge.onEvents()`.
+   * Register this with bridge.onEvents().
    */
   handleEvents(events: KittyEvent[]): void {
     for (const event of events) {
@@ -122,6 +122,55 @@ export class EventDispatcher {
 
     // Also broadcast as a raw KittyEvent so useKeyboard hook listeners fire.
     this.bridge.notifyEventListeners([{ type: "keyboard" as const, keyCode, modifiers, eventType }]);
+  }
+
+  /**
+   * Handle a mouse event parsed from stdin SGR sequences.
+   * Creates a synthetic mouse event and dispatches via hitTest.
+   */
+  handleMouseFromStdin(button: number, col: number, row: number, isRelease: boolean): void {
+    const effectiveButton = isRelease ? MOUSE_BUTTON_RELEASE : button;
+
+    const hitPath = this.bridge.hitTest(col, row);
+    const targetNodeId = hitPath.length > 0 ? hitPath[0] : null;
+
+    const nativeEvent: CoreMouseEvent = {
+      type: "mouse",
+      button: effectiveButton,
+      x: col,
+      y: row,
+      pixelX: 0,
+      pixelY: 0,
+      modifiers: 0,
+      nodeId: targetNodeId ?? 0xffffffff,
+    };
+
+    const kittyEvent: KittyMouseEvent = {
+      x: col,
+      y: row,
+      nativeEvent,
+    };
+
+    // Track enter/leave
+    this.updateHoverState(targetNodeId, kittyEvent);
+
+    // Dispatch based on button
+    if (effectiveButton === MOUSE_BUTTON_LEFT) {
+      this.dispatchMouseAlongPath(hitPath, "onMouseDown", kittyEvent);
+      this.dispatchMouseAlongPath(hitPath, "onClick", kittyEvent);
+    } else if (effectiveButton === MOUSE_BUTTON_RELEASE) {
+      this.dispatchMouseAlongPath(hitPath, "onMouseUp", kittyEvent);
+    } else if (effectiveButton === MOUSE_BUTTON_MOVE) {
+      this.dispatchMouseAlongPath(hitPath, "onMouseMove", kittyEvent);
+    } else if (effectiveButton === MOUSE_BUTTON_MIDDLE || effectiveButton === MOUSE_BUTTON_RIGHT) {
+      this.dispatchMouseAlongPath(hitPath, "onMouseDown", kittyEvent);
+    } else if (effectiveButton === MOUSE_BUTTON_SCROLL_UP || effectiveButton === MOUSE_BUTTON_SCROLL_DOWN) {
+      const deltaY = effectiveButton === MOUSE_BUTTON_SCROLL_UP ? -1 : 1;
+      this.dispatchScrollAlongPath(hitPath, deltaY);
+    }
+
+    // Broadcast to event listeners so useMouse hook fires
+    this.bridge.notifyEventListeners([nativeEvent]);
   }
 
   // -----------------------------------------------------------------------

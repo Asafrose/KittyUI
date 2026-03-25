@@ -222,11 +222,13 @@ export const useMouse = (
             });
             setIsHovered(true);
 
-            // button > 0 indicates a press (button 0 = no button / move)
-            if (event.button > 0) {
-              setIsPressed(true);
-            } else {
+            // Button 0 = left press, 1 = middle, 2 = right, 3 = release, 35 = move
+            const RELEASE = 3;
+            const MOVE = 35;
+            if (event.button === RELEASE) {
               setIsPressed(false);
+            } else if (event.button !== MOVE) {
+              setIsPressed(true);
             }
           } else {
             if (isOver !== undefined) {
