@@ -801,6 +801,7 @@ pub unsafe extern "C" fn apply_mutations(buffer_ptr: *const u8, buffer_len: u32)
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
     clippy::too_many_arguments,
+    clippy::too_many_lines,
     clippy::similar_names
 )]
 fn paint_node(
@@ -871,8 +872,7 @@ fn paint_node(
     if let Some(text) = state.text_content.get(&node_id) {
         if !text.is_empty() && w > 0 {
             let char_count = text.chars().count();
-            let needs_ellipsis =
-                text_overflow == TextOverflow::Ellipsis && char_count > w;
+            let needs_ellipsis = text_overflow == TextOverflow::Ellipsis && char_count > w;
             let paint_limit = if needs_ellipsis { w - 1 } else { w };
             for (i, ch) in text.chars().enumerate() {
                 if i >= paint_limit {
