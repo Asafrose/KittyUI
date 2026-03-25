@@ -805,6 +805,18 @@ pub unsafe extern "C" fn apply_mutations(buffer_ptr: *const u8, buffer_len: u32)
 // Rendering
 // ---------------------------------------------------------------------------
 
+/// Check whether a cell at (row, col) is inside the active clip rectangle.
+#[allow(clippy::cast_precision_loss)]
+fn in_clip(row: usize, col: usize, clip: Option<(f32, f32, f32, f32)>) -> bool {
+    if let Some((cx, cy, cw, ch)) = clip {
+        let col_f = col as f32;
+        let row_f = row as f32;
+        col_f >= cx && col_f < cx + cw && row_f >= cy && row_f < cy + ch
+    } else {
+        true
+    }
+}
+
 /// Walk the layout tree recursively and paint each node into the back buffer.
 ///
 /// `parent_x` / `parent_y` are the absolute position of the parent so that
@@ -863,17 +875,6 @@ fn paint_node(
             inherited_italic
         }
     });
-
-    /// Check whether a cell at (row, col) is inside the active clip rectangle.
-    fn in_clip(row: usize, col: usize, clip: Option<(f32, f32, f32, f32)>) -> bool {
-        if let Some((cx, cy, cw, ch)) = clip {
-            let col_f = col as f32;
-            let row_f = row as f32;
-            col_f >= cx && col_f < cx + cw && row_f >= cy && row_f < cy + ch
-        } else {
-            true
-        }
-    }
 
     // Paint background only if we have an explicit bg color (own or inherited).
     if resolved_bg.is_some() {
@@ -2466,10 +2467,7 @@ mod tests {
     fn overflow_hidden_clips_child_background() {
         setup();
 
-        let buf = encode_create_node(
-            1,
-            r#"{"width":10,"height":1,"overflow":"hidden"}"#,
-        );
+        let buf = encode_create_node(1, r#"{"width":10,"height":1,"overflow":"hidden"}"#);
         unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
 
         let buf = encode_create_node(
