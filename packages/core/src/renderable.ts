@@ -5,6 +5,7 @@
  * The Renderable manages its own node ID, style, text content, and lifecycle.
  */
 
+import type { EncodedTextSpan } from "./mutation-encoder.js";
 import { type CSSStyle, normalizeStyle } from "./style.js";
 import type { ComputedLayout, NodeStyle, TextStyle } from "./types.js";
 
@@ -92,6 +93,22 @@ export abstract class Renderable {
 
   setText(text: string | undefined): void {
     this._text = text;
+    this._dirty = true;
+  }
+
+  // -----------------------------------------------------------------------
+  // Color spans (for inline colored text)
+  // -----------------------------------------------------------------------
+
+  /** Encoded color spans for per-character fg color overrides. */
+  private _colorSpans: EncodedTextSpan[] = [];
+
+  get colorSpans(): readonly EncodedTextSpan[] {
+    return this._colorSpans;
+  }
+
+  setColorSpans(spans: EncodedTextSpan[]): void {
+    this._colorSpans = spans;
     this._dirty = true;
   }
 

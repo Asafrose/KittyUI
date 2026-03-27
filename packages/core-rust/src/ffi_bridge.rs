@@ -25,6 +25,7 @@ const OP_APPEND_CHILD: u8 = 3;
 const OP_INSERT_BEFORE: u8 = 4;
 const OP_SET_STYLE: u8 = 5;
 const OP_SET_TEXT: u8 = 6;
+const OP_SET_TEXT_SPANS: u8 = 7;
 
 // ---------------------------------------------------------------------------
 // Event types — must stay in sync with TS `EventDecoder`
@@ -76,6 +77,17 @@ struct NodeVisualStyle {
 }
 
 // ---------------------------------------------------------------------------
+// Text span — per-character color override within text content
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug)]
+struct TextColorSpan {
+    start: u16,
+    end: u16,
+    fg: Color,
+}
+
+// ---------------------------------------------------------------------------
 // Global engine state
 // ---------------------------------------------------------------------------
 
@@ -85,6 +97,8 @@ struct EngineState {
     node_map: HashMap<u32, LayoutNodeId>,
     /// Text content per node (`node_id` to string).
     text_content: HashMap<u32, String>,
+    /// Per-node text color spans for inline styling.
+    text_spans: HashMap<u32, Vec<TextColorSpan>>,
     /// Pending events encoded as binary.
     event_buffer: Vec<u8>,
     /// Root node id (first node created, or explicitly set).
@@ -117,6 +131,7 @@ impl EngineState {
             layout: LayoutTree::new(),
             node_map: HashMap::new(),
             text_content: HashMap::new(),
+            text_spans: HashMap::new(),
             event_buffer: Vec::new(),
             root_node: None,
             dirty: false,
@@ -662,6 +677,7 @@ fn process_mutation(reader: &mut MutationReader<'_>, state: &mut EngineState) ->
         OP_INSERT_BEFORE => mut_insert_before(reader, state),
         OP_SET_STYLE => mut_set_style(reader, state),
         OP_SET_TEXT => mut_set_text(reader, state),
+        OP_SET_TEXT_SPANS => mut_set_text_spans(reader, state),
         _ => false,
     };
     if ok {
@@ -704,6 +720,7 @@ fn mut_remove_node(reader: &mut MutationReader<'_>, state: &mut EngineState) -> 
         let _ = state.layout.remove(layout_id);
     }
     state.text_content.remove(&node_id);
+    state.text_spans.remove(&node_id);
     state.visual_styles.remove(&node_id);
     true
 }
@@ -775,6 +792,44 @@ fn mut_set_text(reader: &mut MutationReader<'_>, state: &mut EngineState) -> boo
     };
     if let Ok(text) = std::str::from_utf8(text_bytes) {
         state.text_content.insert(node_id, text.to_owned());
+    }
+    true
+}
+
+fn mut_set_text_spans(reader: &mut MutationReader<'_>, state: &mut EngineState) -> bool {
+    let Some(node_id) = reader.read_u32() else {
+        return false;
+    };
+    let Some(span_count) = reader.read_u16() else {
+        return false;
+    };
+    let mut spans = Vec::with_capacity(span_count as usize);
+    for _ in 0..span_count {
+        let Some(start) = reader.read_u16() else {
+            return false;
+        };
+        let Some(end) = reader.read_u16() else {
+            return false;
+        };
+        let Some(r) = reader.read_u8() else {
+            return false;
+        };
+        let Some(g) = reader.read_u8() else {
+            return false;
+        };
+        let Some(b) = reader.read_u8() else {
+            return false;
+        };
+        spans.push(TextColorSpan {
+            start,
+            end,
+            fg: Color::Rgb(r, g, b),
+        });
+    }
+    if spans.is_empty() {
+        state.text_spans.remove(&node_id);
+    } else {
+        state.text_spans.insert(node_id, spans);
     }
     true
 }
@@ -898,7 +953,7 @@ fn paint_node(
         }
     }
 
-    // Paint text content — use resolved colours and text attributes.
+    // Paint text content — use resolved colours, text attributes, and per-span overrides.
     // Respect text_overflow: Clip stops at boundary, Ellipsis places an ellipsis at the end.
     let text_overflow = vs.map_or(TextOverflow::Clip, |v| v.text_overflow);
     if let Some(text) = state.text_content.get(&node_id) {
@@ -906,6 +961,7 @@ fn paint_node(
             let char_count = text.chars().count();
             let needs_ellipsis = text_overflow == TextOverflow::Ellipsis && char_count > w;
             let paint_limit = if needs_ellipsis { w - 1 } else { w };
+            let spans = state.text_spans.get(&node_id);
             for (i, ch) in text.chars().enumerate() {
                 if i >= paint_limit {
                     break;
@@ -922,9 +978,14 @@ fn paint_node(
                         cell.ch = ch;
                         cell.style.bold = resolved_bold;
                         cell.style.italic = resolved_italic;
-                        if let Some(fg) = resolved_fg {
-                            cell.style.fg = Some(fg);
-                        }
+                        let span_fg = spans.and_then(|ss| {
+                            let idx = i as u16;
+                            ss.iter()
+                                .rev()
+                                .find(|s| idx >= s.start && idx < s.end)
+                                .map(|s| s.fg)
+                        });
+                        cell.style.fg = span_fg.or(resolved_fg);
                         if let Some(bg) = resolved_bg {
                             cell.style.bg = Some(bg);
                         }
