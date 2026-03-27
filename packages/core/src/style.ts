@@ -14,6 +14,20 @@ const SPACING_PAIR_LEN = 2;
 const ZERO_DIM: Dim = { type: "cells", value: 0 };
 
 // ---------------------------------------------------------------------------
+// Border character input (mirrors BorderChars from box.ts to avoid circular deps)
+// ---------------------------------------------------------------------------
+
+/** Characters used to render a border (compatible with BoxRenderable's BorderChars). */
+export interface BorderCharsInput {
+  bottomLeft: string;
+  bottomRight: string;
+  horizontal: string;
+  topLeft: string;
+  topRight: string;
+  vertical: string;
+}
+
+// ---------------------------------------------------------------------------
 // CSS-like input style (what users write)
 // ---------------------------------------------------------------------------
 
@@ -34,6 +48,8 @@ const ZERO_DIM: Dim = { type: "cells", value: 0 };
 export interface CSSStyle {
   alignItems?: "start" | "end" | "center" | "baseline" | "stretch" | undefined;
   backgroundColor?: string | Color | undefined;
+  border?: "single" | "double" | "rounded" | "round" | "bold" | BorderCharsInput | false | undefined;
+  borderColor?: string | Color | undefined;
   color?: string | Color | undefined;
   columnGap?: DimInput | undefined;
   display?: "flex" | "grid" | undefined;
@@ -306,6 +322,26 @@ export const normalizeStyle = (css: CSSStyle): { node: NodeStyle; text: TextStyl
     } else {
       const dim = parseDim(css.gap);
       node.gap = [dim, dim];
+    }
+  }
+
+  // Border (passed through to Rust as visual style)
+  if (css.border !== undefined) {
+    (node as Record<string, unknown>).border = css.border;
+  }
+  if (css.borderColor !== undefined) {
+    if (typeof css.borderColor === "string") {
+      (node as Record<string, unknown>).borderColor = css.borderColor;
+    } else {
+      const c = css.borderColor;
+      if (c.type === "rgb") {
+        const HEX = 16;
+        const PAD = 2;
+        const r = c.r.toString(HEX).padStart(PAD, "0");
+        const g = c.g.toString(HEX).padStart(PAD, "0");
+        const b = c.b.toString(HEX).padStart(PAD, "0");
+        (node as Record<string, unknown>).borderColor = `#${r}${g}${b}`;
+      }
     }
   }
 
