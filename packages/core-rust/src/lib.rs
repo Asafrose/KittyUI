@@ -21,6 +21,7 @@ pub mod raw_mode;
 pub mod render_loop;
 pub mod screen;
 pub mod signals;
+pub mod terminal_caps;
 pub mod virtual_placement;
 
 use std::ffi::c_char;

@@ -20,7 +20,7 @@ export type {
   BlurEvent as FfiBlurEvent,
 } from "./event-decoder.js";
 export { Bridge } from "./bridge.js";
-export type { InitResult, NodeLayout } from "./bridge.js";
+export type { InitResult, NodeLayout, TerminalCaps } from "./bridge.js";
 
 // Core types (mirrors Rust structs)
 export type {
