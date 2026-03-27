@@ -1,0 +1,20 @@
+{
+  "name": "@kittyui/example-dashboard",
+  "version": "0.0.1",
+  "private": true,
+  "description": "shadcn/ui-inspired dashboard demo for KittyUI",
+  "scripts": {
+    "start": "bun run src/main.tsx",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@kittyui/core": "workspace:*",
+    "@kittyui/react": "workspace:*",
+    "react": "^19.2.4",
+    "react-reconciler": "^0.33.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "typescript": "^5.8.3"
+  }
+}
