@@ -14,6 +14,7 @@ use crate::cell::DoubleBuffer;
 use crate::focus::{FocusManager, FocusMeta};
 use crate::hit_test::HitTester;
 use crate::layout::{LayoutNodeId, LayoutTree, NodeStyle};
+use crate::terminal_caps;
 
 // ---------------------------------------------------------------------------
 // Op codes — must stay in sync with TS `MutationEncoder`
@@ -178,6 +179,8 @@ struct EngineState {
     visual_styles: HashMap<u32, NodeVisualStyle>,
     /// Output writer — `None` means write to real stdout.
     output: Option<Vec<u8>>,
+    /// Detected terminal capabilities.
+    terminal_caps: terminal_caps::TerminalCaps,
 }
 
 impl EngineState {
@@ -199,6 +202,7 @@ impl EngineState {
             double_buf: DoubleBuffer::new(80, 24),
             visual_styles: HashMap::new(),
             output: None,
+            terminal_caps: terminal_caps::detect(),
         }
     }
 
@@ -318,6 +322,31 @@ pub extern "C" fn shutdown() {
     let _ = std::io::stdout().lock().write_all(&ansi::cursor_show());
     let _ = std::io::stdout().lock().flush();
     let _ = crate::screen::exit();
+}
+
+/// Return terminal capabilities as a JSON string.
+///
+/// Writes up to `max_len` bytes of JSON into `out_ptr` and returns the
+/// number of bytes written.  If the buffer is too small the output is
+/// truncated (caller should allocate generously, e.g. 1024 bytes).
+///
+/// # Safety
+///
+/// - `out_ptr` must point to a writable buffer of at least `max_len` bytes.
+#[no_mangle]
+#[allow(clippy::cast_possible_truncation)]
+pub unsafe extern "C" fn get_terminal_caps(out_ptr: *mut u8, max_len: u32) -> u32 {
+    with_engine(|state| {
+        let json = serde_json::to_string(&state.terminal_caps).unwrap_or_default();
+        let bytes = json.as_bytes();
+        let n = bytes.len().min(max_len as usize);
+        if !out_ptr.is_null() && n > 0 {
+            unsafe {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_ptr, n);
+            }
+        }
+        n as u32
+    })
 }
 
 /// Set the viewport (available terminal) size.  The next `render_frame()`

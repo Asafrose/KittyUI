@@ -50,6 +50,10 @@ const symbols = {
   set_tab_index: { args: [FFIType.u32, FFIType.i32], returns: FFIType.void },
   set_focus_trap: { args: [FFIType.u32, FFIType.u8], returns: FFIType.void },
   set_viewport_size: { args: [FFIType.u16, FFIType.u16], returns: FFIType.void },
+  get_terminal_caps: {
+    args: [FFIType.ptr, FFIType.u32],
+    returns: FFIType.u32,
+  },
 } as const;
 
 // -----------------------------------------------------------------------
@@ -62,6 +66,15 @@ export interface InitResult {
   versionMinor: number;
   versionPatch: number;
   batchedFfi: boolean;
+}
+
+/** Terminal capabilities detected at startup by the Rust engine. */
+export interface TerminalCaps {
+  kitty_graphics: boolean;
+  true_color: boolean;
+  cell_pixel_width: number;
+  cell_pixel_height: number;
+  terminal_name: string | null;
 }
 
 export interface NodeLayout {
@@ -284,6 +297,16 @@ export class Bridge {
   setViewportSize(cols: number, rows: number): void {
     this.assertReady();
     this.lib!.symbols.set_viewport_size(cols, rows);
+  }
+
+  /** Query terminal capabilities detected at startup. */
+  getCaps(): TerminalCaps {
+    this.assertReady();
+    const MAX_LEN = 1024;
+    const buf = new Uint8Array(MAX_LEN);
+    const n = this.lib!.symbols.get_terminal_caps(ptr(buf), MAX_LEN);
+    const json = new TextDecoder().decode(buf.subarray(0, n));
+    return JSON.parse(json) as TerminalCaps;
   }
 
   /** Decode a raw event buffer and dispatch to listeners. */
