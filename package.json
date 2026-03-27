@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "description": "A Rust core + React bindings framework for building rich terminal apps using the Kitty graphics protocol",
-  "workspaces": ["packages/*"],
+  "workspaces": ["packages/*", "examples/*"],
   "scripts": {
     "build": "bun run --filter '*' build",
     "test": "bun run test:rs && bun run test:ts",
