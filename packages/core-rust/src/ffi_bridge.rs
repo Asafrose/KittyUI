@@ -130,6 +130,8 @@ struct NodeVisualStyle {
     overflow: Overflow,
     /// Border style.
     border: Option<BorderStyle>,
+    /// Border radius in pixels for rounded corners (rendered via pixel canvas).
+    border_radius: f32,
 }
 
 // ---------------------------------------------------------------------------
@@ -189,6 +191,8 @@ struct EngineState {
     cell_cols: Option<u32>,
     /// Terminal cell row count (from CSI 18 t response).
     cell_rows: Option<u32>,
+    /// Accumulated pixel-rendered escape sequences (Kitty graphics protocol).
+    pixel_output: Vec<u8>,
 }
 
 impl EngineState {
@@ -215,6 +219,7 @@ impl EngineState {
             pixel_height: None,
             cell_cols: None,
             cell_rows: None,
+            pixel_output: Vec::new(),
         }
     }
 
@@ -767,6 +772,9 @@ fn parse_visual_style_json(json: &[u8]) -> NodeVisualStyle {
             vs.border = Some(BorderStyle { preset, color });
         }
     }
+    if let Some(br) = json_extract_f32(s, "borderRadius") {
+        vs.border_radius = br;
+    }
     vs
 }
 
@@ -1037,6 +1045,14 @@ fn in_clip(row: usize, col: usize, clip: Option<(f32, f32, f32, f32)>) -> bool {
     }
 }
 
+/// Convert a terminal `Color` to an RGBA pixel array.
+fn color_to_rgba(color: Color, alpha: u8) -> [u8; 4] {
+    match color {
+        Color::Rgb(r, g, b) => [r, g, b, alpha],
+        _ => [0, 0, 0, alpha], // fallback to black
+    }
+}
+
 /// Walk the layout tree recursively and paint each node into the back buffer.
 ///
 /// `parent_x` / `parent_y` are the absolute position of the parent so that
@@ -1056,6 +1072,7 @@ fn in_clip(row: usize, col: usize, clip: Option<(f32, f32, f32, f32)>) -> bool {
 fn paint_node(
     state: &EngineState,
     back: &mut crate::cell::CellBuffer,
+    pixel_output: &mut Vec<u8>,
     node_id: u32,
     parent_x: f32,
     parent_y: f32,
@@ -1135,6 +1152,42 @@ fn paint_node(
                 if let Some(cell) = back.get_mut(row, col) {
                     cell.ch = ' ';
                     cell.style = cell_style;
+                }
+            }
+        }
+    }
+
+    // Pixel-rendered rounded background via Kitty graphics protocol.
+    let border_radius = vs.map_or(0.0, |v| v.border_radius);
+    if border_radius > 0.0 && w > 0 && h > 0 {
+        // Cell pixel dimensions (fallback; TODO: read from TerminalCaps).
+        let cell_w = 8u32;
+        let cell_h = 16u32;
+
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let px_w = (w as u32) * cell_w;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let px_h = (h as u32) * cell_h;
+
+        if px_w > 0 && px_h > 0 {
+            let mut canvas = crate::pixel_canvas::PixelCanvas::new(px_w, px_h);
+
+            let bg = resolved_bg.unwrap_or(Color::Rgb(0, 0, 0));
+            let rgba = color_to_rgba(bg, 255);
+
+            #[allow(clippy::cast_precision_loss)]
+            canvas.fill_rounded_rect(0.0, 0.0, px_w as f32, px_h as f32, border_radius, rgba);
+
+            if let Ok(img_data) = canvas.to_image_data() {
+                let image_id = crate::image::ImageCache::next_id();
+                if let Ok(transmit_bytes) = crate::image::encode_transmit(&img_data, image_id) {
+                    // Move cursor to the node position and transmit + display the image.
+                    let cursor_move = format!("\x1b[{};{}H", y0 + 1, x0 + 1);
+                    let display_bytes = crate::image::encode_display(image_id, None);
+
+                    pixel_output.extend_from_slice(cursor_move.as_bytes());
+                    pixel_output.extend_from_slice(&transmit_bytes);
+                    pixel_output.extend_from_slice(&display_bytes);
                 }
             }
         }
@@ -1272,6 +1325,7 @@ fn paint_node(
                 paint_node(
                     state,
                     back,
+                    pixel_output,
                     child_uid,
                     abs_x,
                     abs_y,
@@ -1345,9 +1399,12 @@ pub extern "C" fn render_frame() {
                     tmp
                 };
 
+                let mut pixel_buf = std::mem::take(&mut state.pixel_output);
+
                 paint_node(
                     state,
                     &mut back_buf,
+                    &mut pixel_buf,
                     root_id,
                     0.0,
                     0.0,
@@ -1361,8 +1418,9 @@ pub extern "C" fn render_frame() {
                     None,
                 );
 
-                // Swap the painted buffer back.
+                // Swap the painted buffer back and restore pixel output.
                 std::mem::swap(state.double_buf.back_mut(), &mut back_buf);
+                state.pixel_output = pixel_buf;
             }
 
             // Output: use full_render for test mode (captured output),
@@ -1378,6 +1436,12 @@ pub extern "C" fn render_frame() {
                 if !diff.is_empty() {
                     state.write_output(&diff);
                 }
+            }
+
+            // Flush pixel-rendered graphics (border-radius, etc.).
+            if !state.pixel_output.is_empty() {
+                let pixel_data = std::mem::take(&mut state.pixel_output);
+                state.write_output(&pixel_data);
             }
 
             // Swap buffers.
@@ -3027,5 +3091,105 @@ mod tests {
         });
 
         teardown();
+    }
+
+    // -- color_to_rgba tests ------------------------------------------------
+
+    #[test]
+    fn color_to_rgba_rgb() {
+        assert_eq!(
+            color_to_rgba(Color::Rgb(255, 128, 0), 200),
+            [255, 128, 0, 200]
+        );
+    }
+
+    #[test]
+    fn color_to_rgba_non_rgb_falls_back_to_black() {
+        // Indexed colors fall back to black.
+        assert_eq!(color_to_rgba(Color::Ansi(1), 255), [0, 0, 0, 255]);
+    }
+
+    // -- border_radius pixel canvas tests -----------------------------------
+
+    #[test]
+    #[serial]
+    fn border_radius_generates_pixel_output() {
+        setup();
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(
+            1,
+            r##"{"width":80,"height":24,"flexDirection":"column"}"##,
+        ));
+        buf.extend(encode_create_node(
+            2,
+            r##"{"width":10,"height":3,"backgroundColor":"#1e293b","borderRadius":8}"##,
+        ));
+        buf.extend(encode_append_child(1, 2));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        render_frame();
+
+        with_engine(|state| {
+            let output = state
+                .output
+                .as_ref()
+                .expect("test mode should capture output");
+            let text = String::from_utf8_lossy(output);
+            // Pixel output should contain Kitty graphics protocol sequences.
+            assert!(
+                text.contains("\x1b_G"),
+                "output should contain Kitty graphics APC sequence for border-radius"
+            );
+        });
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn border_radius_zero_produces_no_pixel_output() {
+        setup();
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(
+            1,
+            r##"{"width":80,"height":24,"flexDirection":"column"}"##,
+        ));
+        buf.extend(encode_create_node(
+            2,
+            r##"{"width":10,"height":3,"backgroundColor":"#1e293b","borderRadius":0}"##,
+        ));
+        buf.extend(encode_append_child(1, 2));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        render_frame();
+
+        with_engine(|state| {
+            let output = state
+                .output
+                .as_ref()
+                .expect("test mode should capture output");
+            let text = String::from_utf8_lossy(output);
+            // No Kitty graphics when borderRadius is 0.
+            assert!(
+                !text.contains("\x1b_G"),
+                "output should NOT contain Kitty graphics APC when borderRadius is 0"
+            );
+        });
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn border_radius_pixel_canvas_correct_size() {
+        // A 10x3 node with 8x16 cell pixels should produce an 80x48 pixel canvas.
+        let cell_w = 8u32;
+        let cell_h = 16u32;
+        let node_w = 10u32;
+        let node_h = 3u32;
+        let px_w = node_w * cell_w;
+        let px_h = node_h * cell_h;
+        let canvas = crate::pixel_canvas::PixelCanvas::new(px_w, px_h);
+        assert_eq!(canvas.width, 80);
+        assert_eq!(canvas.height, 48);
+        assert_eq!(canvas.data.len(), (80 * 48 * 4) as usize);
     }
 }
