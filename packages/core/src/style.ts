@@ -47,6 +47,8 @@ export interface BorderCharsInput {
  */
 export interface CSSStyle {
   alignItems?: "start" | "end" | "center" | "baseline" | "stretch" | undefined;
+  /** Background: a color string or CSS `linear-gradient(...)` expression. */
+  background?: string | undefined;
   backgroundColor?: string | Color | undefined;
   border?: "single" | "double" | "rounded" | "round" | "bold" | BorderCharsInput | false | undefined;
   borderColor?: string | Color | undefined;

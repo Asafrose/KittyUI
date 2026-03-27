@@ -13,7 +13,9 @@ use crate::ansi::{self, Color, Style as CellStyle};
 use crate::cell::DoubleBuffer;
 use crate::focus::{FocusManager, FocusMeta};
 use crate::hit_test::HitTester;
+use crate::image;
 use crate::layout::{LayoutNodeId, LayoutTree, NodeStyle};
+use crate::pixel_canvas::PixelCanvas;
 use crate::terminal_caps;
 
 // ---------------------------------------------------------------------------
@@ -106,12 +108,32 @@ struct BorderStyle {
     color: Option<Color>,
 }
 
+/// A single color stop in a CSS linear-gradient.
+#[derive(Clone, Debug)]
+struct GradientStop {
+    /// Position along the gradient axis (0.0 = start, 1.0 = end).
+    position: f32,
+    /// RGBA color at this stop.
+    color: [u8; 4],
+}
+
+/// A parsed CSS `linear-gradient(...)` value.
+#[derive(Clone, Debug)]
+struct LinearGradient {
+    /// Angle in degrees (CSS convention: 0 = to top, 90 = to right, 180 = to bottom).
+    angle_deg: f32,
+    /// Color stops along the gradient.
+    stops: Vec<GradientStop>,
+}
+
 /// Visual (non-layout) style properties for a node.
 #[derive(Clone, Debug, Default)]
 #[allow(clippy::struct_excessive_bools)]
 struct NodeVisualStyle {
     /// Background color.
     bg: Option<Color>,
+    /// Parsed linear-gradient background (takes precedence over `bg`).
+    gradient: Option<LinearGradient>,
     /// Foreground (text) color.
     fg: Option<Color>,
     /// Bold text.
@@ -193,6 +215,27 @@ struct EngineState {
     cell_rows: Option<u32>,
     /// Accumulated pixel-rendered escape sequences (Kitty graphics protocol).
     pixel_output: Vec<u8>,
+    /// Gradient image data queued during paint for Kitty protocol output.
+    gradient_images: Vec<GradientImage>,
+    /// Next auto-incremented image id for gradient transmissions.
+    next_gradient_image_id: u32,
+}
+
+/// A gradient rendered to pixel data, ready for Kitty protocol output.
+#[allow(dead_code)]
+struct GradientImage {
+    /// Terminal column position.
+    col: u32,
+    /// Terminal row position.
+    row: u32,
+    /// Width in terminal cells.
+    cell_w: u32,
+    /// Height in terminal cells.
+    cell_h: u32,
+    /// Kitty image id used for transmission.
+    image_id: u32,
+    /// Encoded pixel data (PNG or raw RGBA).
+    canvas: PixelCanvas,
 }
 
 impl EngineState {
@@ -220,6 +263,8 @@ impl EngineState {
             cell_cols: None,
             cell_rows: None,
             pixel_output: Vec::new(),
+            gradient_images: Vec::new(),
+            next_gradient_image_id: 50000,
         }
     }
 
@@ -721,6 +766,248 @@ fn parse_hex_color(hex: &str) -> Option<Color> {
     }
 }
 
+/// Parse a hex color string into RGBA. Supports #RGB, #RRGGBB, and #RRGGBBAA.
+fn parse_hex_rgba(hex: &str) -> Option<[u8; 4]> {
+    let hex = hex.strip_prefix('#')?;
+    match hex.len() {
+        3 => {
+            let r = u8::from_str_radix(&hex[0..1], 16).ok()?;
+            let g = u8::from_str_radix(&hex[1..2], 16).ok()?;
+            let b = u8::from_str_radix(&hex[2..3], 16).ok()?;
+            Some([r << 4 | r, g << 4 | g, b << 4 | b, 255])
+        }
+        6 => {
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            Some([r, g, b, 255])
+        }
+        8 => {
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            let a = u8::from_str_radix(&hex[6..8], 16).ok()?;
+            Some([r, g, b, a])
+        }
+        _ => None,
+    }
+}
+
+/// Parse a CSS color value into RGBA. Supports:
+/// - `#RGB`, `#RRGGBB`, `#RRGGBBAA`
+/// - `rgb(r, g, b)` / `rgba(r, g, b, a)`
+/// - Named colors: `transparent`, `black`, `white`, `red`, `green`, `blue`
+#[allow(
+    clippy::many_single_char_names,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+fn parse_css_color_rgba(s: &str) -> Option<[u8; 4]> {
+    let s = s.trim();
+    if s.starts_with('#') {
+        return parse_hex_rgba(s);
+    }
+    if s.starts_with("rgb") {
+        // rgb(r, g, b) or rgba(r, g, b, a)
+        let inner = s
+            .strip_prefix("rgba(")
+            .or_else(|| s.strip_prefix("rgb("))?
+            .strip_suffix(')')?;
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() < 3 {
+            return None;
+        }
+        let r = parts[0].trim().parse::<u8>().ok()?;
+        let g = parts[1].trim().parse::<u8>().ok()?;
+        let b = parts[2].trim().parse::<u8>().ok()?;
+        let a = if parts.len() >= 4 {
+            let av = parts[3].trim().parse::<f32>().ok()?;
+            (av.clamp(0.0, 1.0) * 255.0) as u8
+        } else {
+            255
+        };
+        return Some([r, g, b, a]);
+    }
+    match s {
+        "transparent" => Some([0, 0, 0, 0]),
+        "black" => Some([0, 0, 0, 255]),
+        "white" => Some([255, 255, 255, 255]),
+        "red" => Some([255, 0, 0, 255]),
+        "green" => Some([0, 128, 0, 255]),
+        "blue" => Some([0, 0, 255, 255]),
+        "yellow" => Some([255, 255, 0, 255]),
+        "cyan" => Some([0, 255, 255, 255]),
+        "magenta" => Some([255, 0, 255, 255]),
+        "orange" => Some([255, 165, 0, 255]),
+        "purple" => Some([128, 0, 128, 255]),
+        "gray" | "grey" => Some([128, 128, 128, 255]),
+        _ => None,
+    }
+}
+
+/// Split a gradient argument string by commas, respecting parentheses (e.g. `rgb()`).
+fn split_gradient_args(s: &str) -> Vec<&str> {
+    let mut result = Vec::new();
+    let mut depth = 0u32;
+    let mut start = 0;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                result.push(s[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    let last = s[start..].trim();
+    if !last.is_empty() {
+        result.push(last);
+    }
+    result
+}
+
+/// Parse a CSS `linear-gradient(...)` string into a `LinearGradient`.
+#[allow(clippy::too_many_lines)]
+fn parse_linear_gradient(s: &str) -> Option<LinearGradient> {
+    let inner = s
+        .trim()
+        .strip_prefix("linear-gradient(")?
+        .strip_suffix(')')?;
+    let args = split_gradient_args(inner);
+    if args.is_empty() {
+        return None;
+    }
+
+    let (angle_deg, stop_start) = parse_gradient_direction(args[0].trim());
+
+    // Parse color stops
+    let stop_args = &args[stop_start..];
+    if stop_args.is_empty() {
+        return None;
+    }
+
+    let (mut stops, positions_missing) = parse_gradient_stops(stop_args);
+    if stops.is_empty() {
+        return None;
+    }
+
+    distribute_missing_positions(&mut stops, &positions_missing);
+
+    Some(LinearGradient { angle_deg, stops })
+}
+
+/// Parse the direction/angle from the first gradient argument.
+/// Returns `(angle_deg, stop_start_index)`.
+fn parse_gradient_direction(first: &str) -> (f32, usize) {
+    if first.ends_with("deg") {
+        if let Some(angle_str) = first.strip_suffix("deg") {
+            if let Ok(a) = angle_str.trim().parse::<f32>() {
+                return (a, 1);
+            }
+        }
+    } else if first.starts_with("to ") {
+        #[allow(clippy::match_same_arms)]
+        let angle = match first {
+            "to top" => 0.0,
+            "to right" => 90.0,
+            "to bottom" => 180.0,
+            "to left" => 270.0,
+            "to top right" | "to right top" => 45.0,
+            "to bottom right" | "to right bottom" => 135.0,
+            "to bottom left" | "to left bottom" => 225.0,
+            "to top left" | "to left top" => 315.0,
+            _ => 180.0,
+        };
+        return (angle, 1);
+    }
+    (180.0, 0) // CSS default: to bottom
+}
+
+/// Parse color stop arguments into stops and a list of indices with missing positions.
+fn parse_gradient_stops(stop_args: &[&str]) -> (Vec<GradientStop>, Vec<usize>) {
+    let mut stops: Vec<GradientStop> = Vec::new();
+    let mut positions_missing: Vec<usize> = Vec::new();
+
+    for (i, arg) in stop_args.iter().enumerate() {
+        let arg = arg.trim();
+        let (color_str, position) = if let Some(pct_idx) = arg.rfind('%') {
+            let before_pct = arg[..pct_idx].trim();
+            if let Some(space_idx) = before_pct.rfind(|c: char| c.is_whitespace()) {
+                let pct_str = before_pct[space_idx + 1..].trim();
+                if let Ok(pct) = pct_str.parse::<f32>() {
+                    (before_pct[..space_idx].trim(), Some(pct / 100.0))
+                } else {
+                    (arg, None)
+                }
+            } else {
+                (arg, None)
+            }
+        } else {
+            (arg, None)
+        };
+
+        if let Some(color) = parse_css_color_rgba(color_str) {
+            if let Some(pos) = position {
+                stops.push(GradientStop {
+                    position: pos,
+                    color,
+                });
+            } else {
+                positions_missing.push(i);
+                stops.push(GradientStop {
+                    position: 0.0, // placeholder
+                    color,
+                });
+            }
+        }
+    }
+
+    (stops, positions_missing)
+}
+
+/// Distribute evenly-spaced positions for gradient stops that lack explicit positions.
+#[allow(clippy::cast_precision_loss, clippy::needless_range_loop)]
+fn distribute_missing_positions(stops: &mut [GradientStop], positions_missing: &[usize]) {
+    if stops.len() <= 1 {
+        if !stops.is_empty() {
+            stops[0].position = 0.0;
+        }
+        return;
+    }
+
+    // First and last default to 0.0 and 1.0
+    if positions_missing.contains(&0) {
+        stops[0].position = 0.0;
+    }
+    let last_idx = stops.len() - 1;
+    if positions_missing.contains(&last_idx) {
+        stops[last_idx].position = 1.0;
+    }
+
+    // Fill in remaining missing positions by linear interpolation
+    let mut i = 0;
+    while i < stops.len() {
+        if !positions_missing.contains(&i) || i == 0 || i == last_idx {
+            i += 1;
+            continue;
+        }
+        let start_pos = stops[i - 1].position;
+        let mut end_idx = i + 1;
+        while end_idx < stops.len() && positions_missing.contains(&end_idx) && end_idx != last_idx {
+            end_idx += 1;
+        }
+        let end_pos = stops[end_idx].position;
+        let count = (end_idx - i + 1) as f32;
+        for j in i..end_idx {
+            let frac = (j - i + 1) as f32 / count;
+            stops[j].position = start_pos + (end_pos - start_pos) * frac;
+        }
+        i = end_idx + 1;
+    }
+}
+
 /// Parse a JSON style blob and also extract visual style (bg/fg colors, bold, italic).
 fn parse_visual_style_json(json: &[u8]) -> NodeVisualStyle {
     let s = std::str::from_utf8(json).unwrap_or("{}");
@@ -774,6 +1061,15 @@ fn parse_visual_style_json(json: &[u8]) -> NodeVisualStyle {
     }
     if let Some(br) = json_extract_f32(s, "borderRadius") {
         vs.border_radius = br;
+    }
+    // CSS `background` property — supports `linear-gradient(...)` or a plain color.
+    if let Some(bg_str) = json_extract_str(s, "background") {
+        if bg_str.starts_with("linear-gradient(") {
+            vs.gradient = parse_linear_gradient(bg_str);
+        } else if let Some(color) = parse_hex_color(bg_str) {
+            // Plain color string as background fallback.
+            vs.bg = Some(color);
+        }
     }
     vs
 }
@@ -1073,6 +1369,8 @@ fn paint_node(
     state: &EngineState,
     back: &mut crate::cell::CellBuffer,
     pixel_output: &mut Vec<u8>,
+    gradient_images: &mut Vec<GradientImage>,
+    next_gradient_id: &mut u32,
     node_id: u32,
     parent_x: f32,
     parent_y: f32,
@@ -1194,6 +1492,54 @@ fn paint_node(
                     pixel_output.extend_from_slice(&display_bytes);
                 }
             }
+        }
+    }
+
+    // Paint gradient background via pixel rendering (Kitty graphics protocol).
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
+    if let Some(grad) = vs.and_then(|v| v.gradient.as_ref()) {
+        // Use terminal capabilities for cell dimensions, fall back to defaults.
+        let cell_px_w: u32 = if state.terminal_caps.cell_pixel_width > 0 {
+            state.terminal_caps.cell_pixel_width
+        } else {
+            8
+        };
+        let cell_px_h: u32 = if state.terminal_caps.cell_pixel_height > 0 {
+            state.terminal_caps.cell_pixel_height
+        } else {
+            16
+        };
+        let node_width = w as u32;
+        let node_height = h as u32;
+        let px_w = node_width * cell_px_w;
+        let px_h = node_height * cell_px_h;
+
+        if px_w > 0 && px_h > 0 {
+            let mut canvas = PixelCanvas::new(px_w, px_h);
+            let stops: Vec<(f32, [u8; 4])> =
+                grad.stops.iter().map(|s| (s.position, s.color)).collect();
+            // Convert CSS angle to PixelCanvas angle:
+            // CSS: 0deg = to top, 90deg = to right, 180deg = to bottom
+            // PixelCanvas: 0deg = left-to-right, 90deg = top-to-bottom
+            // Conversion: canvas_angle = css_angle - 90
+            let canvas_angle = grad.angle_deg - 90.0;
+            canvas.fill_linear_gradient(0.0, 0.0, px_w as f32, px_h as f32, canvas_angle, &stops);
+
+            let image_id = *next_gradient_id;
+            *next_gradient_id += 1;
+
+            gradient_images.push(GradientImage {
+                col: x0 as u32,
+                row: y0 as u32,
+                cell_w: node_width,
+                cell_h: node_height,
+                image_id,
+                canvas,
+            });
         }
     }
 
@@ -1330,6 +1676,8 @@ fn paint_node(
                     state,
                     back,
                     pixel_output,
+                    gradient_images,
+                    next_gradient_id,
                     child_uid,
                     abs_x,
                     abs_y,
@@ -1365,6 +1713,7 @@ fn intersect_clip(
 
 /// Run the full render pipeline: layout, paint, diff, output, flush events.
 #[no_mangle]
+#[allow(clippy::too_many_lines)]
 pub extern "C" fn render_frame() {
     with_engine(|state| {
         // 1. Compute layout and rebuild hit-test grid.
@@ -1390,6 +1739,7 @@ pub extern "C" fn render_frame() {
             state.double_buf.back_mut().clear();
 
             // Walk all nodes and paint them.
+            state.gradient_images.clear();
             if let Some(root_id) = state.root_node {
                 // We need to pass state immutably while mutating the buffer.
                 // Temporarily take the back buffer out so we can pass state
@@ -1404,11 +1754,16 @@ pub extern "C" fn render_frame() {
                 };
 
                 let mut pixel_buf = std::mem::take(&mut state.pixel_output);
+                // Also take gradient_images out so paint_node can fill it.
+                let mut grad_images = std::mem::take(&mut state.gradient_images);
+                let mut next_grad_id = state.next_gradient_image_id;
 
                 paint_node(
                     state,
                     &mut back_buf,
                     &mut pixel_buf,
+                    &mut grad_images,
+                    &mut next_grad_id,
                     root_id,
                     0.0,
                     0.0,
@@ -1421,6 +1776,10 @@ pub extern "C" fn render_frame() {
                     false,
                     None,
                 );
+
+                // Restore gradient images and id counter.
+                state.gradient_images = grad_images;
+                state.next_gradient_image_id = next_grad_id;
 
                 // Swap the painted buffer back and restore pixel output.
                 std::mem::swap(state.double_buf.back_mut(), &mut back_buf);
@@ -1442,16 +1801,38 @@ pub extern "C" fn render_frame() {
                 }
             }
 
-            // Flush pixel-rendered graphics (border-radius, etc.).
+            // Flush pixel-rendered graphics (border-radius, gradients, etc.).
             // Delete all previously transmitted images first to prevent
             // memory leaks in the terminal — each frame re-transmits
             // the images it needs.
-            if !state.pixel_output.is_empty() {
+            let has_pixel = !state.pixel_output.is_empty();
+            let has_gradient = !state.gradient_images.is_empty();
+            if has_pixel || has_gradient {
                 let delete_cmd = crate::image::encode_delete(crate::image::DeleteTarget::All);
                 state.write_output(&delete_cmd);
+            }
+            if has_pixel {
                 let pixel_data = std::mem::take(&mut state.pixel_output);
                 state.write_output(&pixel_data);
             }
+
+            // Emit gradient images via Kitty graphics protocol.
+            let grad_images = std::mem::take(&mut state.gradient_images);
+            for grad_img in &grad_images {
+                if let Ok(img_data) = grad_img.canvas.to_image_data() {
+                    if let Ok(transmit_data) = image::encode_transmit(&img_data, grad_img.image_id)
+                    {
+                        state.write_output(&transmit_data);
+                        // Move cursor to placement position and display the image.
+                        let cursor_move =
+                            format!("\x1b[{};{}H", grad_img.row + 1, grad_img.col + 1);
+                        state.write_output(cursor_move.as_bytes());
+                        let display = image::encode_display(grad_img.image_id, None);
+                        state.write_output(&display);
+                    }
+                }
+            }
+            drop(grad_images);
 
             // Swap buffers.
             state.double_buf.swap_no_clear();
@@ -3112,6 +3493,108 @@ mod tests {
         );
     }
 
+    // -----------------------------------------------------------------------
+    // Gradient parser tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_gradient_basic_angle_and_hex_stops() {
+        let g = parse_linear_gradient("linear-gradient(135deg, #667eea 0%, #764ba2 100%)")
+            .expect("should parse");
+        assert!((g.angle_deg - 135.0).abs() < 0.01);
+        assert_eq!(g.stops.len(), 2);
+        assert!((g.stops[0].position - 0.0).abs() < 0.01);
+        assert!((g.stops[1].position - 1.0).abs() < 0.01);
+        assert_eq!(g.stops[0].color, [0x66, 0x7e, 0xea, 255]);
+        assert_eq!(g.stops[1].color, [0x76, 0x4b, 0xa2, 255]);
+    }
+
+    #[test]
+    fn parse_gradient_direction_to_right() {
+        let g =
+            parse_linear_gradient("linear-gradient(to right, #3b82f6, #8b5cf6)").expect("parse");
+        assert!((g.angle_deg - 90.0).abs() < 0.01);
+        assert_eq!(g.stops.len(), 2);
+        // Positions should be auto-distributed: 0.0 and 1.0
+        assert!((g.stops[0].position - 0.0).abs() < 0.01);
+        assert!((g.stops[1].position - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn parse_gradient_direction_to_bottom() {
+        let g = parse_linear_gradient("linear-gradient(to bottom, black, white)").expect("parse");
+        assert!((g.angle_deg - 180.0).abs() < 0.01);
+        assert_eq!(g.stops[0].color, [0, 0, 0, 255]);
+        assert_eq!(g.stops[1].color, [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn parse_gradient_default_direction() {
+        // No angle/direction means 180deg (to bottom)
+        let g = parse_linear_gradient("linear-gradient(#ff0000, #0000ff)").expect("parse");
+        assert!((g.angle_deg - 180.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn parse_gradient_three_stops_auto_position() {
+        let g = parse_linear_gradient("linear-gradient(90deg, red, green, blue)").expect("parse");
+        assert_eq!(g.stops.len(), 3);
+        assert!((g.stops[0].position - 0.0).abs() < 0.01);
+        assert!((g.stops[1].position - 0.5).abs() < 0.01);
+        assert!((g.stops[2].position - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn parse_gradient_rgb_color() {
+        let g = parse_linear_gradient("linear-gradient(0deg, rgb(255,0,0) 0%, rgb(0,0,255) 100%)")
+            .expect("parse");
+        assert_eq!(g.stops[0].color, [255, 0, 0, 255]);
+        assert_eq!(g.stops[1].color, [0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn parse_gradient_short_hex() {
+        let g = parse_linear_gradient("linear-gradient(45deg, #fff 0%, #000 100%)").expect("parse");
+        assert_eq!(g.stops[0].color, [255, 255, 255, 255]);
+        assert_eq!(g.stops[1].color, [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn parse_gradient_invalid_returns_none() {
+        assert!(parse_linear_gradient("not-a-gradient").is_none());
+        assert!(parse_linear_gradient("linear-gradient()").is_none());
+    }
+
+    #[test]
+    fn parse_gradient_diagonal_directions() {
+        let g =
+            parse_linear_gradient("linear-gradient(to bottom right, red, blue)").expect("parse");
+        assert!((g.angle_deg - 135.0).abs() < 0.01);
+        let g = parse_linear_gradient("linear-gradient(to top left, red, blue)").expect("parse");
+        assert!((g.angle_deg - 315.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn parse_css_color_rgba_named() {
+        assert_eq!(parse_css_color_rgba("transparent"), Some([0, 0, 0, 0]));
+        assert_eq!(parse_css_color_rgba("white"), Some([255, 255, 255, 255]));
+        assert_eq!(parse_css_color_rgba("black"), Some([0, 0, 0, 255]));
+    }
+
+    #[test]
+    fn parse_css_color_rgba_hex() {
+        assert_eq!(parse_css_color_rgba("#FF0000"), Some([255, 0, 0, 255]));
+        assert_eq!(parse_css_color_rgba("#f00"), Some([255, 0, 0, 255]));
+    }
+
+    #[test]
+    fn parse_css_color_rgba_rgb_func() {
+        assert_eq!(
+            parse_css_color_rgba("rgb(128, 64, 32)"),
+            Some([128, 64, 32, 255])
+        );
+    }
+
     #[test]
     fn color_to_rgba_non_rgb_falls_back_to_black() {
         // Indexed colors fall back to black.
@@ -3200,5 +3683,55 @@ mod tests {
         assert_eq!(canvas.width, 80);
         assert_eq!(canvas.height, 48);
         assert_eq!(canvas.data.len(), (80 * 48 * 4) as usize);
+    }
+
+    // -----------------------------------------------------------------------
+    // Gradient CSS color + parser tests (continued)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_css_color_rgba_rgba_func() {
+        let c = parse_css_color_rgba("rgba(255, 0, 0, 0.5)").expect("parse rgba");
+        assert_eq!(c[0], 255);
+        assert_eq!(c[1], 0);
+        assert_eq!(c[2], 0);
+        // 0.5 * 255 = 127.5, truncated to 127
+        assert!(c[3] >= 126 && c[3] <= 128);
+    }
+
+    #[test]
+    fn gradient_pixel_canvas_produces_nonuniform_pixels() {
+        let grad = parse_linear_gradient("linear-gradient(90deg, #000000, #ffffff)")
+            .expect("parse gradient");
+        let mut canvas = PixelCanvas::new(80, 16);
+        let stops: Vec<(f32, [u8; 4])> = grad.stops.iter().map(|s| (s.position, s.color)).collect();
+        canvas.fill_linear_gradient(0.0, 0.0, 80.0, 16.0, 0.0, &stops);
+        // Left side should be dark, right side should be bright
+        let left = canvas.get_pixel(5, 8);
+        let right = canvas.get_pixel(75, 8);
+        assert!(
+            right[0] > left[0],
+            "right {} should be brighter than left {}",
+            right[0],
+            left[0]
+        );
+    }
+
+    #[test]
+    fn visual_style_parses_gradient_background() {
+        let json = br##"{"background":"linear-gradient(90deg, #3b82f6, #8b5cf6)"}"##;
+        let vs = parse_visual_style_json(json);
+        assert!(vs.gradient.is_some());
+        let grad = vs.gradient.unwrap();
+        assert!((grad.angle_deg - 90.0).abs() < 0.01);
+        assert_eq!(grad.stops.len(), 2);
+    }
+
+    #[test]
+    fn visual_style_plain_background_color() {
+        let json = br##"{"background":"#ff0000"}"##;
+        let vs = parse_visual_style_json(json);
+        assert!(vs.gradient.is_none());
+        assert_eq!(vs.bg, Some(Color::Rgb(255, 0, 0)));
     }
 }

@@ -122,6 +122,7 @@ const preprocessStyle = (style: Record<string, unknown>, overrideCols?: number, 
         }
         break;
       }
+      case "background":
       case "backgroundColor":
       case "color": {
         // Pass through string values.
