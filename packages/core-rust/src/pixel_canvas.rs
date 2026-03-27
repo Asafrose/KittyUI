@@ -137,9 +137,9 @@ impl PixelCanvas {
             let sc = src[i] as f32 / 255.0;
             let dc = self.data[idx + i] as f32 / 255.0;
             let out_c = (sc * sa + dc * da * (1.0 - sa)) / out_a;
-            self.data[idx + i] = (out_c * 255.0) as u8;
+            self.data[idx + i] = (out_c * 255.0 + 0.5) as u8;
         }
-        self.data[idx + 3] = (out_a * 255.0) as u8;
+        self.data[idx + 3] = (out_a * 255.0 + 0.5) as u8;
     }
 
     /// Apply a box blur (approximation of gaussian blur).
@@ -206,7 +206,8 @@ impl PixelCanvas {
 
     /// Fill a linear gradient across a rect.
     ///
-    /// - `angle_deg`: degrees (0 = left-to-right, 90 = top-to-bottom)
+    /// - `angle_deg`: CSS angle in degrees (0 = to top, 90 = to right,
+    ///   180 = to bottom, 270 = to left).
     /// - `stops`: `[(position 0.0..=1.0, RGBA color)]`
     pub fn fill_linear_gradient(
         &mut self,
@@ -225,6 +226,9 @@ impl PixelCanvas {
             return;
         }
 
+        // CSS gradient angles: 0deg = "to top", 90deg = "to right",
+        // 180deg = "to bottom". The gradient line direction vector is
+        // (sin(angle), -cos(angle)) in screen coords (y-down).
         let angle = angle_deg.to_radians();
         let cos_a = angle.cos();
         let sin_a = angle.sin();
@@ -236,10 +240,11 @@ impl PixelCanvas {
 
         for py in y0..y1 {
             for px in x0..x1 {
-                let fx = (px as f32 + 0.5 - x) / w;
-                let fy = (py as f32 + 0.5 - y) / h;
-                // Project onto gradient axis
-                let t = (fx * cos_a + fy * sin_a).clamp(0.0, 1.0);
+                // Normalized coordinates centered on the rect (range -0.5..0.5)
+                let fx = (px as f32 + 0.5 - x) / w - 0.5;
+                let fy = (py as f32 + 0.5 - y) / h - 0.5;
+                // Project onto CSS gradient axis: sin(a)*x - cos(a)*y
+                let t = (0.5 + fx * sin_a - fy * cos_a).clamp(0.0, 1.0);
                 let color = interpolate_stops(t, stops);
                 self.blend_pixel(px, py, color);
             }
@@ -306,7 +311,7 @@ fn interpolate_stops(t: f32, stops: &[(f32, [u8; 4])]) -> [u8; 4] {
 
 #[inline]
 fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
-    (a as f32 + (b as f32 - a as f32) * t) as u8
+    (a as f32 + (b as f32 - a as f32) * t + 0.5) as u8
 }
 
 // ---------------------------------------------------------------------------
@@ -507,7 +512,8 @@ mod tests {
     fn linear_gradient_left_to_right() {
         let mut c = PixelCanvas::new(100, 1);
         let stops = vec![(0.0, [0, 0, 0, 255]), (1.0, [255, 255, 255, 255])];
-        c.fill_linear_gradient(0.0, 0.0, 100.0, 1.0, 0.0, &stops);
+        // CSS 90deg = "to right" (left-to-right)
+        c.fill_linear_gradient(0.0, 0.0, 100.0, 1.0, 90.0, &stops);
         // Left side should be dark
         let left = c.get_pixel(5, 0);
         // Right side should be bright
@@ -517,6 +523,38 @@ mod tests {
             "right {} should be brighter than left {}",
             right[0],
             left[0]
+        );
+    }
+
+    #[test]
+    fn linear_gradient_to_top() {
+        let mut c = PixelCanvas::new(1, 100);
+        let stops = vec![(0.0, [0, 0, 0, 255]), (1.0, [255, 255, 255, 255])];
+        // CSS 0deg = "to top" (bottom is dark, top is bright)
+        c.fill_linear_gradient(0.0, 0.0, 1.0, 100.0, 0.0, &stops);
+        let bottom = c.get_pixel(0, 95);
+        let top = c.get_pixel(0, 5);
+        assert!(
+            top[0] > bottom[0],
+            "top {} should be brighter than bottom {}",
+            top[0],
+            bottom[0]
+        );
+    }
+
+    #[test]
+    fn linear_gradient_to_bottom() {
+        let mut c = PixelCanvas::new(1, 100);
+        let stops = vec![(0.0, [0, 0, 0, 255]), (1.0, [255, 255, 255, 255])];
+        // CSS 180deg = "to bottom" (top is dark, bottom is bright)
+        c.fill_linear_gradient(0.0, 0.0, 1.0, 100.0, 180.0, &stops);
+        let top = c.get_pixel(0, 5);
+        let bottom = c.get_pixel(0, 95);
+        assert!(
+            bottom[0] > top[0],
+            "bottom {} should be brighter than top {}",
+            bottom[0],
+            top[0]
         );
     }
 
