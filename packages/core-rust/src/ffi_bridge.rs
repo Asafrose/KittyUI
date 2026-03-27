@@ -126,6 +126,23 @@ struct LinearGradient {
     stops: Vec<GradientStop>,
 }
 
+/// CSS box-shadow properties.
+#[derive(Clone, Debug)]
+struct BoxShadow {
+    offset_x: f32,
+    offset_y: f32,
+    blur_radius: f32,
+    spread_radius: f32,
+    color: [u8; 4],
+}
+
+/// A rendered shadow image ready for Kitty protocol output.
+struct ShadowImage {
+    data: crate::image::ImageData,
+    col: u32,
+    row: u32,
+}
+
 /// Visual (non-layout) style properties for a node.
 #[derive(Clone, Debug, Default)]
 #[allow(clippy::struct_excessive_bools)]
@@ -152,6 +169,8 @@ struct NodeVisualStyle {
     overflow: Overflow,
     /// Border style.
     border: Option<BorderStyle>,
+    /// CSS box-shadow.
+    box_shadow: Option<BoxShadow>,
     /// Border radius in pixels for rounded corners (rendered via pixel canvas).
     border_radius: f32,
 }
@@ -845,6 +864,11 @@ fn parse_css_color_rgba(s: &str) -> Option<[u8; 4]> {
     }
 }
 
+/// Alias used by box-shadow parsing code — delegates to [`parse_css_color_rgba`].
+fn parse_css_color(s: &str) -> Option<[u8; 4]> {
+    parse_css_color_rgba(s)
+}
+
 /// Split a gradient argument string by commas, respecting parentheses (e.g. `rgb()`).
 fn split_gradient_args(s: &str) -> Vec<&str> {
     let mut result = Vec::new();
@@ -1008,6 +1032,103 @@ fn distribute_missing_positions(stops: &mut [GradientStop], positions_missing: &
     }
 }
 
+/// Strip an optional `px` suffix and parse a numeric value.
+fn parse_length(s: &str) -> Option<f32> {
+    let s = s.trim().strip_suffix("px").unwrap_or(s.trim());
+    s.parse::<f32>().ok()
+}
+
+/// Parse a CSS `box-shadow` string into a [`BoxShadow`].
+///
+/// Format: `[inset?] offset-x offset-y [blur-radius [spread-radius]] color`
+/// Values can be `Npx` or just `N`. Color can be `rgba(...)`, `#hex`, or named.
+fn parse_box_shadow(s: &str) -> Option<BoxShadow> {
+    let s = s.trim();
+    // Skip "inset" keyword if present (we don't handle inset shadows but still parse)
+    let s = s.strip_prefix("inset").map_or(s, |rest| rest.trim_start());
+
+    // Strategy: find the color part first (starts with rgba(, rgb(, #, or is a named color at the end)
+    // Then parse the numeric values before it.
+    let (numeric_part, color) = extract_color_and_numbers(s)?;
+
+    let tokens: Vec<&str> = numeric_part.split_whitespace().collect();
+    if tokens.len() < 2 {
+        return None;
+    }
+
+    let offset_x = parse_length(tokens[0])?;
+    let offset_y = parse_length(tokens[1])?;
+    let blur_radius = if tokens.len() > 2 {
+        parse_length(tokens[2]).unwrap_or(0.0)
+    } else {
+        0.0
+    };
+    let spread_radius = if tokens.len() > 3 {
+        parse_length(tokens[3]).unwrap_or(0.0)
+    } else {
+        0.0
+    };
+
+    Some(BoxShadow {
+        offset_x,
+        offset_y,
+        blur_radius,
+        spread_radius,
+        color,
+    })
+}
+
+/// Split a box-shadow string into (numeric values part, parsed color).
+/// Color can appear at the start or end of the string.
+fn extract_color_and_numbers(s: &str) -> Option<(&str, [u8; 4])> {
+    // Try rgba(...) or rgb(...) anywhere in the string
+    if let Some(idx) = s.find("rgba(") {
+        let end = s[idx..].find(')')? + idx + 1;
+        let color_str = &s[idx..end];
+        let color = parse_css_color(color_str)?;
+        let before = s[..idx].trim();
+        let after = s[end..].trim();
+        let numeric = if before.is_empty() { after } else { before };
+        return Some((numeric, color));
+    }
+    if let Some(idx) = s.find("rgb(") {
+        let end = s[idx..].find(')')? + idx + 1;
+        let color_str = &s[idx..end];
+        let color = parse_css_color(color_str)?;
+        let before = s[..idx].trim();
+        let after = s[end..].trim();
+        let numeric = if before.is_empty() { after } else { before };
+        return Some((numeric, color));
+    }
+    // Try #hex at end or start
+    if let Some(idx) = s.rfind('#') {
+        let color_str = &s[idx..];
+        // The hex color extends until whitespace or end of string
+        let end = color_str
+            .find(|c: char| c.is_whitespace())
+            .unwrap_or(color_str.len());
+        let color_str = &color_str[..end];
+        if let Some(color) = parse_css_color(color_str) {
+            let before = s[..idx].trim();
+            let after_idx = idx + end;
+            let after = if after_idx < s.len() {
+                s[after_idx..].trim()
+            } else {
+                ""
+            };
+            let numeric = if before.is_empty() { after } else { before };
+            return Some((numeric, color));
+        }
+    }
+    // Try named color at end
+    let last_token = s.split_whitespace().last()?;
+    if let Some(color) = parse_css_color(last_token) {
+        let numeric = s[..s.len() - last_token.len()].trim();
+        return Some((numeric, color));
+    }
+    None
+}
+
 /// Parse a JSON style blob and also extract visual style (bg/fg colors, bold, italic).
 fn parse_visual_style_json(json: &[u8]) -> NodeVisualStyle {
     let s = std::str::from_utf8(json).unwrap_or("{}");
@@ -1058,6 +1179,9 @@ fn parse_visual_style_json(json: &[u8]) -> NodeVisualStyle {
             let color = json_extract_str(s, "borderColor").and_then(parse_hex_color);
             vs.border = Some(BorderStyle { preset, color });
         }
+    }
+    if let Some(shadow_str) = json_extract_str(s, "boxShadow") {
+        vs.box_shadow = parse_box_shadow(shadow_str);
     }
     if let Some(br) = json_extract_f32(s, "borderRadius") {
         vs.border_radius = br;
@@ -1371,6 +1495,7 @@ fn paint_node(
     pixel_output: &mut Vec<u8>,
     gradient_images: &mut Vec<GradientImage>,
     next_gradient_id: &mut u32,
+    shadow_images: &mut Vec<ShadowImage>,
     node_id: u32,
     parent_x: f32,
     parent_y: f32,
@@ -1429,6 +1554,61 @@ fn paint_node(
         }
     });
     let resolved_dim = vs.map_or(inherited_dim, |v| if v.dim { true } else { inherited_dim });
+
+    // Paint box-shadow via pixel rendering (before background).
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )]
+    if let Some(shadow) = vs.and_then(|v| v.box_shadow.as_ref()) {
+        let cell_w: u32 = 8;
+        let cell_h: u32 = 16;
+
+        let expand = (shadow.blur_radius + shadow.spread_radius.abs()).ceil() as u32;
+        let node_w = w as u32;
+        let node_h = h as u32;
+        let px_w = node_w * cell_w + expand * 2;
+        let px_h = node_h * cell_h + expand * 2;
+
+        if px_w > 0 && px_h > 0 {
+            let mut canvas = crate::pixel_canvas::PixelCanvas::new(px_w, px_h);
+
+            // Draw shadow shape (offset from center of expansion area)
+            let expand_f = expand as f32;
+            let sx = expand_f + shadow.offset_x;
+            let sy = expand_f + shadow.offset_y;
+            let sw =
+                f32::from(node_w as u16) * f32::from(cell_w as u16) + shadow.spread_radius * 2.0;
+            let sh =
+                f32::from(node_h as u16) * f32::from(cell_h as u16) + shadow.spread_radius * 2.0;
+
+            let radius = vs.map_or(0.0, |v| v.border_radius);
+            if radius > 0.0 {
+                canvas.fill_rounded_rect(sx, sy, sw, sh, radius, shadow.color);
+            } else {
+                canvas.fill_rect(sx, sy, sw, sh, shadow.color);
+            }
+
+            // Apply gaussian blur (3-pass box blur approximation)
+            let blur_px = shadow.blur_radius.ceil() as u32;
+            canvas.box_blur(blur_px);
+
+            // Transmit via Kitty protocol — place image at shadow offset position
+            if let Ok(img_data) = canvas.to_image_data() {
+                let expand_cells_x = (expand / cell_w) as usize + 1;
+                let expand_cells_y = (expand / cell_h) as usize + 1;
+                let img_x = x0.saturating_sub(expand_cells_x);
+                let img_y = y0.saturating_sub(expand_cells_y);
+
+                shadow_images.push(ShadowImage {
+                    data: img_data,
+                    col: img_x as u32,
+                    row: img_y as u32,
+                });
+            }
+        }
+    }
 
     // Pixel-rendered rounded background via Kitty graphics protocol.
     let border_radius = vs.map_or(0.0, |v| v.border_radius);
@@ -1678,6 +1858,7 @@ fn paint_node(
                     pixel_output,
                     gradient_images,
                     next_gradient_id,
+                    shadow_images,
                     child_uid,
                     abs_x,
                     abs_y,
@@ -1757,6 +1938,7 @@ pub extern "C" fn render_frame() {
                 // Also take gradient_images out so paint_node can fill it.
                 let mut grad_images = std::mem::take(&mut state.gradient_images);
                 let mut next_grad_id = state.next_gradient_image_id;
+                let mut shadow_images: Vec<ShadowImage> = Vec::new();
 
                 paint_node(
                     state,
@@ -1764,6 +1946,7 @@ pub extern "C" fn render_frame() {
                     &mut pixel_buf,
                     &mut grad_images,
                     &mut next_grad_id,
+                    &mut shadow_images,
                     root_id,
                     0.0,
                     0.0,
@@ -1784,6 +1967,20 @@ pub extern "C" fn render_frame() {
                 // Swap the painted buffer back and restore pixel output.
                 std::mem::swap(state.double_buf.back_mut(), &mut back_buf);
                 state.pixel_output = pixel_buf;
+
+                // Output shadow images via Kitty protocol before cell output.
+                for shadow in &shadow_images {
+                    let img_id = crate::image::ImageCache::next_id();
+                    if let Ok(transmit_data) = crate::image::encode_transmit(&shadow.data, img_id) {
+                        // Transmit the image data
+                        state.write_output(&transmit_data);
+                        // Position cursor and display at shadow location
+                        let move_cursor = format!("\x1b[{};{}H", shadow.row + 1, shadow.col + 1);
+                        state.write_output(move_cursor.as_bytes());
+                        let display_cmd = crate::image::encode_display(img_id, None);
+                        state.write_output(&display_cmd);
+                    }
+                }
             }
 
             // Output: use full_render for test mode (captured output),
@@ -3733,5 +3930,117 @@ mod tests {
         let vs = parse_visual_style_json(json);
         assert!(vs.gradient.is_none());
         assert_eq!(vs.bg, Some(Color::Rgb(255, 0, 0)));
+    }
+
+    // -- box-shadow parser tests -------------------------------------------
+
+    #[test]
+    fn parse_box_shadow_basic_rgba() {
+        let s = parse_box_shadow("0 4px 6px rgba(0,0,0,0.3)").unwrap();
+        assert!((s.offset_x - 0.0).abs() < f32::EPSILON);
+        assert!((s.offset_y - 4.0).abs() < f32::EPSILON);
+        assert!((s.blur_radius - 6.0).abs() < f32::EPSILON);
+        assert!((s.spread_radius - 0.0).abs() < f32::EPSILON);
+        assert_eq!(s.color, [0, 0, 0, 76]); // 0.3 * 255 = 76.5, truncated to 76
+    }
+
+    #[test]
+    fn parse_box_shadow_with_spread() {
+        let s = parse_box_shadow("0 4px 6px -1px rgba(0,0,0,0.1)").unwrap();
+        assert!((s.offset_x - 0.0).abs() < f32::EPSILON);
+        assert!((s.offset_y - 4.0).abs() < f32::EPSILON);
+        assert!((s.blur_radius - 6.0).abs() < f32::EPSILON);
+        assert!((s.spread_radius - (-1.0)).abs() < f32::EPSILON);
+        assert_eq!(s.color, [0, 0, 0, 25]); // 0.1 * 255 = 25.5, truncated to 25
+    }
+
+    #[test]
+    fn parse_box_shadow_hex_with_alpha() {
+        let s = parse_box_shadow("2px 2px 10px 2px #00000080").unwrap();
+        assert!((s.offset_x - 2.0).abs() < f32::EPSILON);
+        assert!((s.offset_y - 2.0).abs() < f32::EPSILON);
+        assert!((s.blur_radius - 10.0).abs() < f32::EPSILON);
+        assert!((s.spread_radius - 2.0).abs() < f32::EPSILON);
+        assert_eq!(s.color, [0, 0, 0, 128]); // 0x80 = 128
+    }
+
+    #[test]
+    fn parse_box_shadow_hex_no_alpha() {
+        let s = parse_box_shadow("1px 2px 3px #ff0000").unwrap();
+        assert!((s.offset_x - 1.0).abs() < f32::EPSILON);
+        assert!((s.offset_y - 2.0).abs() < f32::EPSILON);
+        assert!((s.blur_radius - 3.0).abs() < f32::EPSILON);
+        assert!((s.spread_radius - 0.0).abs() < f32::EPSILON);
+        assert_eq!(s.color, [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn parse_box_shadow_no_blur() {
+        let s = parse_box_shadow("5px 5px rgba(255,0,0,1.0)").unwrap();
+        assert!((s.offset_x - 5.0).abs() < f32::EPSILON);
+        assert!((s.offset_y - 5.0).abs() < f32::EPSILON);
+        assert!((s.blur_radius - 0.0).abs() < f32::EPSILON);
+        assert!((s.spread_radius - 0.0).abs() < f32::EPSILON);
+        assert_eq!(s.color, [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn parse_box_shadow_rgba_float_alpha() {
+        let s = parse_box_shadow("0 0 5px rgba(128,64,32,0.5)").unwrap();
+        assert_eq!(s.color, [128, 64, 32, 127]); // 0.5 * 255 = 127.5, truncated to 127
+    }
+
+    #[test]
+    fn parse_css_color_rgba_via_alias() {
+        let c = parse_css_color("rgba(255,128,0,0.5)").unwrap();
+        assert_eq!(c[0], 255);
+        assert_eq!(c[1], 128);
+        assert_eq!(c[2], 0);
+        assert_eq!(c[3], 127); // 0.5 * 255 = 127.5, truncated to 127
+    }
+
+    #[test]
+    fn parse_css_color_hex8() {
+        let c = parse_css_color("#ff00ff80").unwrap();
+        assert_eq!(c, [255, 0, 255, 128]);
+    }
+
+    #[test]
+    fn parse_css_color_hex6() {
+        let c = parse_css_color("#00ff00").unwrap();
+        assert_eq!(c, [0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn parse_css_color_hex3() {
+        let c = parse_css_color("#f00").unwrap();
+        assert_eq!(c, [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn parse_css_color_named() {
+        assert_eq!(parse_css_color("black").unwrap(), [0, 0, 0, 255]);
+        assert_eq!(parse_css_color("white").unwrap(), [255, 255, 255, 255]);
+        assert_eq!(parse_css_color("transparent").unwrap(), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn parse_box_shadow_invalid_returns_none() {
+        assert!(parse_box_shadow("").is_none());
+        assert!(parse_box_shadow("invalid").is_none());
+    }
+
+    #[test]
+    fn pixel_canvas_shadow_produces_blurred_output() {
+        // Verify that a rendered shadow has non-zero pixels outside the filled rect
+        let mut canvas = crate::pixel_canvas::PixelCanvas::new(50, 50);
+        canvas.fill_rect(15.0, 15.0, 20.0, 20.0, [0, 0, 0, 200]);
+        canvas.box_blur(5);
+        // Pixel at (5, 25) should have some non-zero alpha from blur
+        let p = canvas.get_pixel(5, 25);
+        assert!(p[3] > 0, "blur should spread alpha to nearby pixels");
+        // Pixel at (25, 25) should still have some alpha
+        let center = canvas.get_pixel(25, 25);
+        assert!(center[3] > 0, "center should retain alpha after blur");
     }
 }
