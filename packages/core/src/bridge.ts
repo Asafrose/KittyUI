@@ -54,6 +54,10 @@ const symbols = {
     args: [FFIType.ptr, FFIType.u32],
     returns: FFIType.u32,
   },
+  set_pixel_size: { args: [FFIType.u32, FFIType.u32], returns: FFIType.void },
+  set_cell_count: { args: [FFIType.u32, FFIType.u32], returns: FFIType.void },
+  get_cell_pixel_width: { args: [], returns: FFIType.u32 },
+  get_cell_pixel_height: { args: [], returns: FFIType.u32 },
 } as const;
 
 // -----------------------------------------------------------------------
@@ -307,6 +311,30 @@ export class Bridge {
     const n = this.lib!.symbols.get_terminal_caps(ptr(buf), MAX_LEN);
     const json = new TextDecoder().decode(buf.subarray(0, n));
     return JSON.parse(json) as TerminalCaps;
+  }
+
+  /** Store the terminal's total pixel dimensions (from CSI 14 t response). */
+  setTerminalPixelSize(width: number, height: number): void {
+    this.assertReady();
+    this.lib!.symbols.set_pixel_size(width, height);
+  }
+
+  /** Store the terminal's cell count (from CSI 18 t response). */
+  setTerminalCellCount(cols: number, rows: number): void {
+    this.assertReady();
+    this.lib!.symbols.set_cell_count(cols, rows);
+  }
+
+  /** Get the computed cell pixel width, or 0 if unknown. */
+  getCellPixelWidth(): number {
+    this.assertReady();
+    return this.lib!.symbols.get_cell_pixel_width();
+  }
+
+  /** Get the computed cell pixel height, or 0 if unknown. */
+  getCellPixelHeight(): number {
+    this.assertReady();
+    return this.lib!.symbols.get_cell_pixel_height();
   }
 
   /** Decode a raw event buffer and dispatch to listeners. */

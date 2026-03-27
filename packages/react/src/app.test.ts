@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { nativeAvailable } from "@kittyui/core";
-import { createApp, parseSgrMouse, type AppHandle, type AppOptions } from "./app.js";
+import { createApp, parseCsiSizeResponse, parseSgrMouse, type AppHandle, type AppOptions } from "./app.js";
 import { TerminalContext, TerminalProvider, type TerminalContextValue } from "./context.js";
 
 // ---------------------------------------------------------------------------
@@ -90,6 +90,48 @@ describe("parseSgrMouse", () => {
     expect(result).not.toBeNull();
     expect(result!.col).toBe(199);
     expect(result!.row).toBe(99);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CSI size response parser
+// ---------------------------------------------------------------------------
+
+describe("parseCsiSizeResponse", () => {
+  test("parses pixel size response (type 4)", () => {
+    const result = parseCsiSizeResponse("\x1b[4;768;1024t");
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe(4);
+    expect(result!.a).toBe(768);
+    expect(result!.b).toBe(1024);
+  });
+
+  test("parses cell count response (type 8)", () => {
+    const result = parseCsiSizeResponse("\x1b[8;24;80t");
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe(8);
+    expect(result!.a).toBe(24);
+    expect(result!.b).toBe(80);
+  });
+
+  test("returns null for non-size sequences", () => {
+    expect(parseCsiSizeResponse("\x1b[A")).toBeNull();
+    expect(parseCsiSizeResponse("hello")).toBeNull();
+    expect(parseCsiSizeResponse("")).toBeNull();
+  });
+
+  test("returns null for malformed responses", () => {
+    expect(parseCsiSizeResponse("\x1b[4;768t")).toBeNull(); // missing third part
+    expect(parseCsiSizeResponse("\x1b[4;768;t")).toBeNull(); // empty third part
+    expect(parseCsiSizeResponse("[4;768;1024t")).toBeNull(); // missing ESC
+  });
+
+  test("handles large pixel values", () => {
+    const result = parseCsiSizeResponse("\x1b[4;2160;3840t");
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe(4);
+    expect(result!.a).toBe(2160);
+    expect(result!.b).toBe(3840);
   });
 });
 

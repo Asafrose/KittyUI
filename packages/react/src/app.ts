@@ -32,6 +32,10 @@ const MOUSE_DISABLE = "\x1b[?1003l\x1b[?1006l\x1b[?1000l";
 // oxlint-disable-next-line no-control-regex
 const SGR_MOUSE_RE = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/;
 
+// CSI t size response regex (pixel size / cell count replies)
+// oxlint-disable-next-line no-control-regex
+const CSI_SIZE_RE = /^\x1b\[(\d+);(\d+);(\d+)t$/;
+
 // Virtual key codes for special keys
 export const KEY_UP = 0x1001;
 export const KEY_DOWN = 0x1002;
@@ -43,6 +47,34 @@ const ESC_MAP: Record<string, number> = {
   "\x1b[B": KEY_DOWN,
   "\x1b[C": KEY_RIGHT,
   "\x1b[D": KEY_LEFT,
+};
+
+// ---------------------------------------------------------------------------
+// CSI size response parser (exported for testing)
+// ---------------------------------------------------------------------------
+
+/** Parsed CSI size response (from CSI 14 t / CSI 18 t queries). */
+export interface CsiSizeResponse {
+  /** Response type: 4 = pixel size, 8 = cell count. */
+  type: number;
+  /** First value: pixel height (type 4) or rows (type 8). */
+  a: number;
+  /** Second value: pixel width (type 4) or cols (type 8). */
+  b: number;
+}
+
+/**
+ * Parse a CSI t size response.
+ * Returns null if the input is not a valid CSI size response.
+ */
+export const parseCsiSizeResponse = (input: string): CsiSizeResponse | null => {
+  const match = input.match(CSI_SIZE_RE);
+  if (!match) return null;
+  return {
+    type: parseInt(match[1]),
+    a: parseInt(match[2]),
+    b: parseInt(match[3]),
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -120,6 +152,9 @@ export const createApp = (
   // Enable mouse tracking (SGR mode with move events)
   process.stdout.write(MOUSE_ENABLE);
 
+  // Query terminal pixel dimensions (fallback when ioctl fails, e.g. tmux/screen)
+  process.stdout.write("\x1b[14t\x1b[18t");
+
   // Set viewport to actual terminal size
   const termCols = process.stdout.columns || DEFAULT_COLS;
   const termRows = process.stdout.rows || DEFAULT_ROWS;
@@ -174,6 +209,22 @@ export const createApp = (
     // Ctrl+C or 'q' triggers graceful shutdown
     if (key === CTRL_C || key === QUIT_KEY) {
       shutdown();
+      return;
+    }
+
+    // Detect CSI t size responses (pixel size / cell count)
+    const sizeMatch = key.match(CSI_SIZE_RE);
+    if (sizeMatch) {
+      const type = parseInt(sizeMatch[1]);
+      const a = parseInt(sizeMatch[2]);
+      const b = parseInt(sizeMatch[3]);
+      if (type === 4) {
+        // Pixel size response: a=height, b=width
+        bridge.setTerminalPixelSize(b, a);
+      } else if (type === 8) {
+        // Cell count response: a=rows, b=cols
+        bridge.setTerminalCellCount(b, a);
+      }
       return;
     }
 
