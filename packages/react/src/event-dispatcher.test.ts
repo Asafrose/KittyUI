@@ -421,6 +421,94 @@ describe("EventDispatcher", () => {
   });
 
   // -----------------------------------------------------------------------
+  // handleMouseFromStdin
+  // -----------------------------------------------------------------------
+
+  describe("handleMouseFromStdin", () => {
+    test("dispatches onClick for left button press", () => {
+      const { tree, child } = buildTree();
+      const bridge = createMockBridge();
+
+      bridge.hitTest.mockImplementation(() => [child.nodeId]);
+
+      const dispatcher = new EventDispatcher(bridge as any, tree);
+      const onClickSpy = mock((_e: KittyMouseEvent) => {});
+      child.eventHandlers.onClick = onClickSpy;
+
+      dispatcher.handleMouseFromStdin(0, 5, 10, false);
+
+      expect(onClickSpy).toHaveBeenCalledTimes(1);
+      expect(onClickSpy.mock.calls[0][0].x).toBe(5);
+      expect(onClickSpy.mock.calls[0][0].y).toBe(10);
+    });
+
+    test("dispatches onMouseUp for release", () => {
+      const { tree, child } = buildTree();
+      const bridge = createMockBridge();
+
+      bridge.hitTest.mockImplementation(() => [child.nodeId]);
+
+      const dispatcher = new EventDispatcher(bridge as any, tree);
+      const mouseUpSpy = mock((_e: KittyMouseEvent) => {});
+      child.eventHandlers.onMouseUp = mouseUpSpy;
+
+      dispatcher.handleMouseFromStdin(0, 3, 4, true); // isRelease = true
+
+      expect(mouseUpSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test("dispatches onMouseMove for button 35", () => {
+      const { tree, child } = buildTree();
+      const bridge = createMockBridge();
+
+      bridge.hitTest.mockImplementation(() => [child.nodeId]);
+
+      const dispatcher = new EventDispatcher(bridge as any, tree);
+      const mouseMoveSpy = mock((_e: KittyMouseEvent) => {});
+      child.eventHandlers.onMouseMove = mouseMoveSpy;
+
+      dispatcher.handleMouseFromStdin(35, 7, 8, false);
+
+      expect(mouseMoveSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test("notifies event listeners for useMouse hook", () => {
+      const { tree } = buildTree();
+      const bridge = createMockBridge();
+
+      bridge.hitTest.mockImplementation(() => []);
+
+      const dispatcher = new EventDispatcher(bridge as any, tree);
+      dispatcher.handleMouseFromStdin(0, 1, 1, false);
+
+      expect(bridge.notifyEventListeners).toHaveBeenCalledTimes(1);
+    });
+
+    test("dispatches to correct node via hitTest", () => {
+      const { tree, root, child, grandchild } = buildTree();
+      const bridge = createMockBridge();
+
+      bridge.hitTest.mockImplementation(() => [
+        grandchild.nodeId,
+        child.nodeId,
+        root.nodeId,
+      ]);
+
+      const dispatcher = new EventDispatcher(bridge as any, tree);
+
+      const grandchildClickSpy = mock((_e: KittyMouseEvent) => {});
+      const rootClickSpy = mock((_e: KittyMouseEvent) => {});
+      grandchild.eventHandlers.onClick = grandchildClickSpy;
+      root.eventHandlers.onClick = rootClickSpy;
+
+      dispatcher.handleMouseFromStdin(0, 2, 3, false);
+
+      expect(grandchildClickSpy).toHaveBeenCalledTimes(1);
+      expect(rootClickSpy).toHaveBeenCalledTimes(0); // bubbling stopped
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // mouseDown / mouseUp
   // -----------------------------------------------------------------------
 
