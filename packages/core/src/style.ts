@@ -14,6 +14,20 @@ const SPACING_PAIR_LEN = 2;
 const ZERO_DIM: Dim = { type: "cells", value: 0 };
 
 // ---------------------------------------------------------------------------
+// Border character input (mirrors BorderChars from box.ts to avoid circular deps)
+// ---------------------------------------------------------------------------
+
+/** Characters used to render a border (compatible with BoxRenderable's BorderChars). */
+export interface BorderCharsInput {
+  bottomLeft: string;
+  bottomRight: string;
+  horizontal: string;
+  topLeft: string;
+  topRight: string;
+  vertical: string;
+}
+
+// ---------------------------------------------------------------------------
 // CSS-like input style (what users write)
 // ---------------------------------------------------------------------------
 
@@ -34,7 +48,7 @@ const ZERO_DIM: Dim = { type: "cells", value: 0 };
 export interface CSSStyle {
   alignItems?: "start" | "end" | "center" | "baseline" | "stretch" | undefined;
   backgroundColor?: string | Color | undefined;
-  border?: "single" | "round" | "double" | "bold" | undefined;
+  border?: "single" | "double" | "rounded" | "round" | "bold" | BorderCharsInput | false | undefined;
   borderColor?: string | Color | undefined;
   color?: string | Color | undefined;
   columnGap?: DimInput | undefined;
