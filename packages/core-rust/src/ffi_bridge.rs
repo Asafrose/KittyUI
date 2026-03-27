@@ -1132,8 +1132,14 @@ fn paint_node(
     });
     let resolved_dim = vs.map_or(inherited_dim, |v| if v.dim { true } else { inherited_dim });
 
-    // Paint background only if we have an explicit bg color (own or inherited).
-    if resolved_bg.is_some() {
+    // Pixel-rendered rounded background via Kitty graphics protocol.
+    let border_radius = vs.map_or(0.0, |v| v.border_radius);
+
+    // Paint cell-based background only when NOT using pixel rendering.
+    // When border_radius > 0 the background is drawn as a rounded-rect image;
+    // painting rectangular cells underneath would show through the transparent
+    // corners and defeat the purpose of rounded corners.
+    if resolved_bg.is_some() && border_radius <= 0.0 {
         let cell_style = CellStyle {
             bg: resolved_bg,
             fg: resolved_fg,
@@ -1157,12 +1163,10 @@ fn paint_node(
         }
     }
 
-    // Pixel-rendered rounded background via Kitty graphics protocol.
-    let border_radius = vs.map_or(0.0, |v| v.border_radius);
     if border_radius > 0.0 && w > 0 && h > 0 {
-        // Cell pixel dimensions (fallback; TODO: read from TerminalCaps).
-        let cell_w = 8u32;
-        let cell_h = 16u32;
+        // Read cell pixel dimensions from terminal capabilities.
+        let cell_w = state.terminal_caps.cell_pixel_width;
+        let cell_h = state.terminal_caps.cell_pixel_height;
 
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let px_w = (w as u32) * cell_w;
@@ -1439,7 +1443,12 @@ pub extern "C" fn render_frame() {
             }
 
             // Flush pixel-rendered graphics (border-radius, etc.).
+            // Delete all previously transmitted images first to prevent
+            // memory leaks in the terminal — each frame re-transmits
+            // the images it needs.
             if !state.pixel_output.is_empty() {
+                let delete_cmd = crate::image::encode_delete(crate::image::DeleteTarget::All);
+                state.write_output(&delete_cmd);
                 let pixel_data = std::mem::take(&mut state.pixel_output);
                 state.write_output(&pixel_data);
             }
