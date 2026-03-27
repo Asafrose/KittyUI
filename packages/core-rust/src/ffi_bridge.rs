@@ -1559,29 +1559,42 @@ fn paint_node(
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        clippy::cast_precision_loss
+        clippy::cast_precision_loss,
+        clippy::items_after_statements
     )]
     if let Some(shadow) = vs.and_then(|v| v.box_shadow.as_ref()) {
         let cell_w: u32 = 8;
         let cell_h: u32 = 16;
 
-        let expand = (shadow.blur_radius + shadow.spread_radius.abs()).ceil() as u32;
+        // Expansion must cover blur + spread + offset so the shadow shape
+        // (which is drawn at `expand + offset`) fits entirely inside the
+        // canvas with enough room for the blur to bleed outward.
+        let expand_x = (shadow.blur_radius + shadow.spread_radius.max(0.0) + shadow.offset_x.abs())
+            .ceil() as u32;
+        let expand_y = (shadow.blur_radius + shadow.spread_radius.max(0.0) + shadow.offset_y.abs())
+            .ceil() as u32;
         let node_w = w as u32;
         let node_h = h as u32;
-        let px_w = node_w * cell_w + expand * 2;
-        let px_h = node_h * cell_h + expand * 2;
+        let px_w = node_w * cell_w + expand_x * 2;
+        let px_h = node_h * cell_h + expand_y * 2;
 
-        if px_w > 0 && px_h > 0 {
+        // Cap canvas size to avoid excessive memory use with large blur values.
+        const MAX_SHADOW_DIM: u32 = 4096;
+
+        if px_w > 0 && px_h > 0 && px_w <= MAX_SHADOW_DIM && px_h <= MAX_SHADOW_DIM {
             let mut canvas = crate::pixel_canvas::PixelCanvas::new(px_w, px_h);
 
-            // Draw shadow shape (offset from center of expansion area)
-            let expand_f = expand as f32;
-            let sx = expand_f + shadow.offset_x;
-            let sy = expand_f + shadow.offset_y;
-            let sw =
-                f32::from(node_w as u16) * f32::from(cell_w as u16) + shadow.spread_radius * 2.0;
-            let sh =
-                f32::from(node_h as u16) * f32::from(cell_h as u16) + shadow.spread_radius * 2.0;
+            // Draw shadow shape centred on the node's pixel footprint.
+            // Spread enlarges the shape symmetrically, so the origin shifts
+            // inward by -spread (i.e. outward when spread > 0).
+            let expand_xf = expand_x as f32;
+            let expand_yf = expand_y as f32;
+            let sx = expand_xf + shadow.offset_x - shadow.spread_radius;
+            let sy = expand_yf + shadow.offset_y - shadow.spread_radius;
+            let node_px_w = node_w as f32 * cell_w as f32;
+            let node_px_h = node_h as f32 * cell_h as f32;
+            let sw = (node_px_w + shadow.spread_radius * 2.0).max(0.0);
+            let sh = (node_px_h + shadow.spread_radius * 2.0).max(0.0);
 
             let radius = vs.map_or(0.0, |v| v.border_radius);
             if radius > 0.0 {
@@ -1596,8 +1609,8 @@ fn paint_node(
 
             // Transmit via Kitty protocol — place image at shadow offset position
             if let Ok(img_data) = canvas.to_image_data() {
-                let expand_cells_x = (expand / cell_w) as usize + 1;
-                let expand_cells_y = (expand / cell_h) as usize + 1;
+                let expand_cells_x = (expand_x / cell_w) as usize + 1;
+                let expand_cells_y = (expand_y / cell_h) as usize + 1;
                 let img_x = x0.saturating_sub(expand_cells_x);
                 let img_y = y0.saturating_sub(expand_cells_y);
 

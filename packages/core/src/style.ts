@@ -109,8 +109,7 @@ export interface CSSStyle {
     | "dashed"
     | undefined;
   width?: DimInput | undefined;
-  boxShadow?: string | undefined;
-  borderRadius?: number | undefined;
+  boxShadow?: string | { char?: string; color?: string | Color; offsetX?: number; offsetY?: number } | undefined;
 }
 
 /** Input for a dimension value. */
@@ -358,9 +357,6 @@ export const normalizeStyle = (css: CSSStyle): { node: NodeStyle; text: TextStyl
   // Box shadow (pass through as string for Rust parser)
   if (css.boxShadow !== undefined) {
     (node as Record<string, unknown>).boxShadow = css.boxShadow;
-  }
-  if (css.borderRadius !== undefined) {
-    (node as Record<string, unknown>).borderRadius = css.borderRadius;
   }
 
   // Text style
