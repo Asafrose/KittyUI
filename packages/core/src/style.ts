@@ -50,6 +50,7 @@ export interface CSSStyle {
   backgroundColor?: string | Color | undefined;
   border?: "single" | "double" | "rounded" | "round" | "bold" | BorderCharsInput | false | undefined;
   borderColor?: string | Color | undefined;
+  borderRadius?: number | undefined;
   color?: string | Color | undefined;
   columnGap?: DimInput | undefined;
   display?: "flex" | "grid" | undefined;
@@ -330,6 +331,9 @@ export const normalizeStyle = (css: CSSStyle): { node: NodeStyle; text: TextStyl
   // Border (passed through to Rust as visual style)
   if (css.border !== undefined) {
     (node as Record<string, unknown>).border = css.border;
+  }
+  if (css.borderRadius !== undefined) {
+    (node as Record<string, unknown>).borderRadius = css.borderRadius;
   }
   if (css.borderColor !== undefined) {
     if (typeof css.borderColor === "string") {
