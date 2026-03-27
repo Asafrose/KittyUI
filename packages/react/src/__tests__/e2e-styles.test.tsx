@@ -574,7 +574,7 @@ describe.skipIf(!canRun)("E2E Styles", () => {
     test("dim via boolean", async () => {
       result = await render(
         <box style={{ width: 20, height: 3 }}>
-          <text style={{ dim: true }}>D</text>
+          <text style={{ dim: true } as any}>D</text>
         </box>,
         { cols: 20, rows: 3 },
       );

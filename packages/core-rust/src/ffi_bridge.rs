@@ -965,7 +965,7 @@ fn in_clip(row: usize, col: usize, clip: Option<(f32, f32, f32, f32)>) -> bool {
     clippy::too_many_lines,
     clippy::similar_names
 )]
-#[allow(clippy::fn_params_excessive_bools, clippy::too_many_lines)]
+#[allow(clippy::fn_params_excessive_bools)]
 fn paint_node(
     state: &EngineState,
     back: &mut crate::cell::CellBuffer,
@@ -2707,7 +2707,10 @@ mod tests {
         // root node
         buf.extend(encode_create_node(1, r#"{"width":20,"height":3}"#));
         // child text node with underline
-        buf.extend(encode_create_node(2, r#"{"underline":true}"#));
+        buf.extend(encode_create_node(
+            2,
+            r#"{"width":20,"height":1,"underline":true}"#,
+        ));
         buf.extend(encode_set_text(2, "hello"));
         buf.extend(encode_append_child(1, 2));
         unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
@@ -2880,7 +2883,10 @@ mod tests {
 
         let mut buf = Vec::new();
         buf.extend(encode_create_node(1, r#"{"width":20,"height":3}"#));
-        buf.extend(encode_create_node(2, r#"{"strikethrough":true}"#));
+        buf.extend(encode_create_node(
+            2,
+            r#"{"width":20,"height":1,"strikethrough":true}"#,
+        ));
         buf.extend(encode_set_text(2, "hello"));
         buf.extend(encode_append_child(1, 2));
         unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
@@ -2912,7 +2918,10 @@ mod tests {
 
         let mut buf = Vec::new();
         buf.extend(encode_create_node(1, r#"{"width":20,"height":3}"#));
-        buf.extend(encode_create_node(2, r#"{"dim":true}"#));
+        buf.extend(encode_create_node(
+            2,
+            r#"{"width":20,"height":1,"dim":true}"#,
+        ));
         buf.extend(encode_set_text(2, "hello"));
         buf.extend(encode_append_child(1, 2));
         unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
