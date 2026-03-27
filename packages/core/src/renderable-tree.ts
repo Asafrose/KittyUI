@@ -48,6 +48,15 @@ const mergeVisualStyle = (style: Record<string, unknown>, renderable: Renderable
   if (ts.textOverflow) {
     result.textOverflow = ts.textOverflow;
   }
+  if (ts.underline) {
+    result.underline = true;
+  }
+  if (ts.strikethrough) {
+    result.strikethrough = true;
+  }
+  if (ts.dim) {
+    result.dim = true;
+  }
   return result;
 };
 

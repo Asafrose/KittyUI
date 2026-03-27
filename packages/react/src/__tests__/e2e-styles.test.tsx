@@ -530,4 +530,56 @@ describe.skipIf(!canRun)("E2E Styles", () => {
       expect(findLayoutBySize(layouts, 20, 3)).toBeDefined();
     });
   });
+
+  // ==========================================================================
+  // Text decoration
+  // ==========================================================================
+
+  describe("textDecoration", () => {
+    test("underline via textDecoration property", async () => {
+      result = await render(
+        <box style={{ width: 20, height: 3 }}>
+          <text style={{ textDecoration: "underline" }}>underlined</text>
+        </box>,
+        { cols: 20, rows: 3 },
+      );
+      const pos = result.screen.findText("underlined");
+      expect(pos).toBeDefined();
+      expect(result.screen.cellAt(pos!.row, pos!.col)?.underline).toBe(true);
+    });
+
+    test("strikethrough via textDecoration", async () => {
+      result = await render(
+        <box style={{ width: 20, height: 3 }}>
+          <text style={{ textDecoration: "strikethrough" }}>struck</text>
+        </box>,
+        { cols: 20, rows: 3 },
+      );
+      const pos = result.screen.findText("struck");
+      expect(pos).toBeDefined();
+      expect(result.screen.cellAt(pos!.row, pos!.col)?.strikethrough).toBe(true);
+    });
+
+    test("strikethrough via line-through alias", async () => {
+      result = await render(
+        <box style={{ width: 20, height: 3 }}>
+          <text style={{ textDecoration: "line-through" }}>S</text>
+        </box>,
+        { cols: 20, rows: 3 },
+      );
+      const pos = result.screen.findText("S");
+      expect(result.screen.cellAt(pos!.row, pos!.col)?.strikethrough).toBe(true);
+    });
+
+    test("dim via boolean", async () => {
+      result = await render(
+        <box style={{ width: 20, height: 3 }}>
+          <text style={{ dim: true } as any}>D</text>
+        </box>,
+        { cols: 20, rows: 3 },
+      );
+      const pos = result.screen.findText("D");
+      expect(result.screen.cellAt(pos!.row, pos!.col)?.dim).toBe(true);
+    });
+  });
 });

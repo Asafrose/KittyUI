@@ -107,6 +107,7 @@ struct BorderStyle {
 
 /// Visual (non-layout) style properties for a node.
 #[derive(Clone, Debug, Default)]
+#[allow(clippy::struct_excessive_bools)]
 struct NodeVisualStyle {
     /// Background color.
     bg: Option<Color>,
@@ -118,6 +119,12 @@ struct NodeVisualStyle {
     italic: bool,
     /// Text overflow behaviour.
     text_overflow: TextOverflow,
+    /// Underline text.
+    underline: bool,
+    /// Strikethrough text.
+    strikethrough: bool,
+    /// Dim text.
+    dim: bool,
     /// Overflow clipping mode.
     overflow: Overflow,
     /// Border style.
@@ -644,6 +651,23 @@ fn parse_visual_style_json(json: &[u8]) -> NodeVisualStyle {
             _ => TextOverflow::Clip,
         };
     }
+    if let Some(u) = json_extract_bool(s, "underline") {
+        vs.underline = u;
+    }
+    if let Some(st) = json_extract_bool(s, "strikethrough") {
+        vs.strikethrough = st;
+    }
+    if let Some(d) = json_extract_bool(s, "dim") {
+        vs.dim = d;
+    }
+    // CSS-like textDecoration: "underline" or "line-through"
+    if let Some(td) = json_extract_str(s, "textDecoration") {
+        match td {
+            "underline" => vs.underline = true,
+            "line-through" | "strikethrough" => vs.strikethrough = true,
+            _ => {}
+        }
+    }
     if let Some(ov) = json_extract_str(s, "overflow") {
         vs.overflow = match ov {
             "hidden" => Overflow::Hidden,
@@ -941,6 +965,7 @@ fn in_clip(row: usize, col: usize, clip: Option<(f32, f32, f32, f32)>) -> bool {
     clippy::too_many_lines,
     clippy::similar_names
 )]
+#[allow(clippy::fn_params_excessive_bools)]
 fn paint_node(
     state: &EngineState,
     back: &mut crate::cell::CellBuffer,
@@ -951,6 +976,9 @@ fn paint_node(
     inherited_fg: Option<Color>,
     inherited_bold: bool,
     inherited_italic: bool,
+    inherited_underline: bool,
+    inherited_strikethrough: bool,
+    inherited_dim: bool,
     clip_rect: Option<(f32, f32, f32, f32)>,
 ) {
     let Some(&layout_id) = state.node_map.get(&node_id) else {
@@ -984,6 +1012,21 @@ fn paint_node(
             inherited_italic
         }
     });
+    let resolved_underline = vs.map_or(inherited_underline, |v| {
+        if v.underline {
+            true
+        } else {
+            inherited_underline
+        }
+    });
+    let resolved_strikethrough = vs.map_or(inherited_strikethrough, |v| {
+        if v.strikethrough {
+            true
+        } else {
+            inherited_strikethrough
+        }
+    });
+    let resolved_dim = vs.map_or(inherited_dim, |v| if v.dim { true } else { inherited_dim });
 
     // Paint background only if we have an explicit bg color (own or inherited).
     if resolved_bg.is_some() {
@@ -992,6 +1035,9 @@ fn paint_node(
             fg: resolved_fg,
             bold: resolved_bold,
             italic: resolved_italic,
+            underline: resolved_underline,
+            strikethrough: resolved_strikethrough,
+            dim: resolved_dim,
             ..CellStyle::new()
         };
         for row in y0..y0 + h {
@@ -1086,6 +1132,9 @@ fn paint_node(
                         cell.ch = ch;
                         cell.style.bold = resolved_bold;
                         cell.style.italic = resolved_italic;
+                        cell.style.underline = resolved_underline;
+                        cell.style.strikethrough = resolved_strikethrough;
+                        cell.style.dim = resolved_dim;
                         let span_fg = spans.and_then(|ss| {
                             let idx = i as u16;
                             ss.iter()
@@ -1143,6 +1192,9 @@ fn paint_node(
                     resolved_fg,
                     resolved_bold,
                     resolved_italic,
+                    resolved_underline,
+                    resolved_strikethrough,
+                    resolved_dim,
                     child_clip,
                 );
             }
@@ -1214,6 +1266,9 @@ pub extern "C" fn render_frame() {
                     0.0,
                     None,
                     None,
+                    false,
+                    false,
+                    false,
                     false,
                     false,
                     None,
@@ -2605,6 +2660,78 @@ mod tests {
         teardown();
     }
 
+    // -- Text decoration: underline, strikethrough, dim --
+
+    #[test]
+    fn parse_visual_style_underline_bool() {
+        let json = br#"{"underline":true}"#;
+        let vs = parse_visual_style_json(json);
+        assert!(vs.underline);
+    }
+
+    #[test]
+    fn parse_visual_style_strikethrough_bool() {
+        let json = br#"{"strikethrough":true}"#;
+        let vs = parse_visual_style_json(json);
+        assert!(vs.strikethrough);
+    }
+
+    #[test]
+    fn parse_visual_style_dim_bool() {
+        let json = br#"{"dim":true}"#;
+        let vs = parse_visual_style_json(json);
+        assert!(vs.dim);
+    }
+
+    #[test]
+    fn parse_visual_style_text_decoration_underline() {
+        let json = br#"{"textDecoration":"underline"}"#;
+        let vs = parse_visual_style_json(json);
+        assert!(vs.underline);
+    }
+
+    #[test]
+    fn parse_visual_style_text_decoration_line_through() {
+        let json = br#"{"textDecoration":"line-through"}"#;
+        let vs = parse_visual_style_json(json);
+        assert!(vs.strikethrough);
+    }
+
+    #[test]
+    #[serial]
+    fn underline_text_emits_sgr4() {
+        teardown();
+        unsafe { init_test_mode(20, 3, std::ptr::null_mut()) };
+
+        let mut buf = Vec::new();
+        // root node
+        buf.extend(encode_create_node(1, r#"{"width":20,"height":3}"#));
+        // child text node with underline
+        buf.extend(encode_create_node(
+            2,
+            r#"{"width":20,"height":1,"underline":true}"#,
+        ));
+        buf.extend(encode_set_text(2, "hello"));
+        buf.extend(encode_append_child(1, 2));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+        render_frame();
+
+        with_engine(|state| {
+            let cell = state.double_buf.back().get(0, 0).unwrap();
+            assert_eq!(cell.ch, 'h');
+            assert!(cell.style.underline, "cell should have underline set");
+            // Verify SGR 4 is emitted
+            let sgr = cell.style.to_sgr();
+            let sgr_str = String::from_utf8_lossy(&sgr);
+            assert!(
+                sgr_str.contains(";4"),
+                "SGR should contain ;4 for underline, got: {sgr_str}"
+            );
+        });
+
+        teardown();
+    }
+
     #[test]
     #[serial]
     fn text_that_fits_is_not_ellipsized() {
@@ -2742,6 +2869,73 @@ mod tests {
                 corner_style.fg,
                 Some(Color::Rgb(255, 0, 0)),
                 "border fg should be red"
+            );
+        });
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn strikethrough_text_emits_sgr9() {
+        teardown();
+        unsafe { init_test_mode(20, 3, std::ptr::null_mut()) };
+
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(1, r#"{"width":20,"height":3}"#));
+        buf.extend(encode_create_node(
+            2,
+            r#"{"width":20,"height":1,"strikethrough":true}"#,
+        ));
+        buf.extend(encode_set_text(2, "hello"));
+        buf.extend(encode_append_child(1, 2));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+        render_frame();
+
+        with_engine(|state| {
+            let cell = state.double_buf.back().get(0, 0).unwrap();
+            assert_eq!(cell.ch, 'h');
+            assert!(
+                cell.style.strikethrough,
+                "cell should have strikethrough set"
+            );
+            let sgr = cell.style.to_sgr();
+            let sgr_str = String::from_utf8_lossy(&sgr);
+            assert!(
+                sgr_str.contains(";9"),
+                "SGR should contain ;9 for strikethrough, got: {sgr_str}"
+            );
+        });
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn dim_text_emits_sgr2() {
+        teardown();
+        unsafe { init_test_mode(20, 3, std::ptr::null_mut()) };
+
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(1, r#"{"width":20,"height":3}"#));
+        buf.extend(encode_create_node(
+            2,
+            r#"{"width":20,"height":1,"dim":true}"#,
+        ));
+        buf.extend(encode_set_text(2, "hello"));
+        buf.extend(encode_append_child(1, 2));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+        render_frame();
+
+        with_engine(|state| {
+            let cell = state.double_buf.back().get(0, 0).unwrap();
+            assert_eq!(cell.ch, 'h');
+            assert!(cell.style.dim, "cell should have dim set");
+            let sgr = cell.style.to_sgr();
+            let sgr_str = String::from_utf8_lossy(&sgr);
+            assert!(
+                sgr_str.contains(";2"),
+                "SGR should contain ;2 for dim, got: {sgr_str}"
             );
         });
 

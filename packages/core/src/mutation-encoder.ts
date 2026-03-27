@@ -137,6 +137,10 @@ const preprocessStyle = (style: Record<string, unknown>, overrideCols?: number, 
       case "bold":
       case "italic":
       case "textOverflow":
+      case "underline":
+      case "strikethrough":
+      case "dim":
+      case "textDecoration":
       case "overflow":
       case "border":
       case "borderColor": {

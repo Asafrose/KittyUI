@@ -87,10 +87,12 @@ export interface CSSStyle {
   paddingRight?: DimInput | undefined;
   paddingTop?: DimInput | undefined;
   rowGap?: DimInput | undefined;
+  dim?: boolean | undefined;
   textDecoration?:
     | "none"
     | "underline"
     | "strikethrough"
+    | "line-through"
     | "overline"
     | undefined;
   textOverflow?: "clip" | "ellipsis" | undefined;
@@ -358,11 +360,14 @@ export const normalizeStyle = (css: CSSStyle): { node: NodeStyle; text: TextStyl
   if (css.textDecoration === "underline") {
     text.underline = true;
   }
-  if (css.textDecoration === "strikethrough") {
+  if (css.textDecoration === "strikethrough" || css.textDecoration === "line-through") {
     text.strikethrough = true;
   }
   if (css.textDecoration === "overline") {
     text.overline = true;
+  }
+  if (css.dim) {
+    text.dim = true;
   }
   if (css.underlineStyle !== undefined) {
     text.underlineStyle = css.underlineStyle;

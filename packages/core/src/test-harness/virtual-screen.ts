@@ -13,7 +13,10 @@ const ESC = 0x1b;
 const OPEN_BRACKET = 0x5b; // '['
 const SGR_RESET = 0;
 const SGR_BOLD = 1;
+const SGR_DIM = 2;
 const SGR_ITALIC = 3;
+const SGR_UNDERLINE = 4;
+const SGR_STRIKETHROUGH = 9;
 const SGR_FG_EXTENDED = 38;
 const SGR_BG_EXTENDED = 48;
 const SGR_RGB_INDICATOR = 2;
@@ -30,14 +33,20 @@ interface ScreenCell {
   bg: string | undefined;
   bold: boolean;
   italic: boolean;
+  underline: boolean;
+  strikethrough: boolean;
+  dim: boolean;
 }
 
 const defaultCell = (): ScreenCell => ({
   bg: undefined,
   bold: false,
   ch: " ",
+  dim: false,
   fg: undefined,
   italic: false,
+  strikethrough: false,
+  underline: false,
 });
 
 // ---------------------------------------------------------------------------
@@ -58,6 +67,9 @@ export class VirtualScreen {
   private currentBg: string | undefined;
   private currentBold = false;
   private currentItalic = false;
+  private currentUnderline = false;
+  private currentStrikethrough = false;
+  private currentDim = false;
 
   constructor(cols: number, rows: number) {
     this.cols = cols;
@@ -143,8 +155,17 @@ export class VirtualScreen {
       } else if (p === SGR_BOLD) {
         this.currentBold = true;
         i++;
+      } else if (p === SGR_DIM) {
+        this.currentDim = true;
+        i++;
       } else if (p === SGR_ITALIC) {
         this.currentItalic = true;
+        i++;
+      } else if (p === SGR_UNDERLINE) {
+        this.currentUnderline = true;
+        i++;
+      } else if (p === SGR_STRIKETHROUGH) {
+        this.currentStrikethrough = true;
         i++;
       } else if (p === SGR_FG_EXTENDED && i + 1 < params.length && params[i + 1] === SGR_RGB_INDICATOR) {
         // 38;2;R;G;B
@@ -173,6 +194,9 @@ export class VirtualScreen {
     this.currentBg = undefined;
     this.currentBold = false;
     this.currentItalic = false;
+    this.currentUnderline = false;
+    this.currentStrikethrough = false;
+    this.currentDim = false;
   }
 
   private writeChar(ch: string): void {
@@ -181,8 +205,11 @@ export class VirtualScreen {
         bg: this.currentBg,
         bold: this.currentBold,
         ch,
+        dim: this.currentDim,
         fg: this.currentFg,
         italic: this.currentItalic,
+        strikethrough: this.currentStrikethrough,
+        underline: this.currentUnderline,
       };
     }
     this.cursorCol++;
