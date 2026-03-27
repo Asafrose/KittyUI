@@ -135,8 +135,8 @@ export interface BoxStyle extends CSSStyle {
   border?: BorderPreset | BorderChars | false | undefined;
   /** Border color. */
   borderColor?: string | Color | undefined;
-  /** Box shadow configuration. */
-  boxShadow?: BoxShadow | undefined;
+  /** Box shadow — CSS string (e.g. "0 4px 6px rgba(0,0,0,0.3)") or structured config. */
+  boxShadow?: string | BoxShadow | undefined;
   /** Overflow behavior. Default: "visible". */
   overflow?: Overflow | undefined;
 }
@@ -265,6 +265,11 @@ export class BoxRenderable extends Renderable {
   setBoxStyle(style: BoxStyle): void {
     const { border, borderColor, background, overflow, boxShadow, ...cssStyle } = style;
 
+    // When boxShadow is a CSS string, pass it through to the Rust pixel renderer.
+    if (typeof boxShadow === "string") {
+      (cssStyle as Record<string, unknown>).boxShadow = boxShadow;
+    }
+
     this.applyBaseStyle(cssStyle, background);
     this.setBorder(border);
     this.setBorderColor(borderColor);
@@ -350,8 +355,12 @@ export class BoxRenderable extends Renderable {
   }
 
   /** Set the box shadow. Pass undefined to remove. */
-  setBoxShadow(shadow: BoxShadow | undefined): void {
+  setBoxShadow(shadow: string | BoxShadow | undefined): void {
     if (shadow === undefined) {
+      this._shadow = undefined;
+    } else if (typeof shadow === "string") {
+      // CSS string shadows are handled by the Rust pixel renderer;
+      // no cell-based shadow on the TS side.
       this._shadow = undefined;
     } else {
       this._shadow = {
@@ -449,7 +458,7 @@ export class BoxRenderable extends Renderable {
 
   private applyOverflowAndShadow(
     overflow: Overflow | undefined,
-    boxShadow: BoxShadow | undefined,
+    boxShadow: string | BoxShadow | undefined,
   ): void {
     if (overflow !== undefined) {
       this._overflow = overflow;
