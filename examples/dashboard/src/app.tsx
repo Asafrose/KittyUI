@@ -20,10 +20,10 @@ import {
 // ── Data ──────────────────────────────────────────────────────────────
 
 const NAV = [
-  { label: "Overview", icon: "\u25C8" },   // ◈
-  { label: "Services", icon: "\u25A0" },   // ■
-  { label: "Logs",     icon: "\u25B6" },   // ▶
-  { label: "Settings", icon: "\u2699" },   // ⚙
+  { label: "Overview", icon: "◈" },
+  { label: "Services", icon: "■" },
+  { label: "Logs",     icon: "▶" },
+  { label: "Settings", icon: "⚙" },
 ] as const;
 
 const SERVICES = [
@@ -38,13 +38,13 @@ const SERVICES = [
 const LOG_ENTRIES = [
   { ts: "12:04:31", level: "INFO",  svc: "api-gateway",      msg: "GET /api/v2/users 200 in 12ms" },
   { ts: "12:04:30", level: "INFO",  svc: "auth-service",     msg: "Token refresh for user_8a3f completed" },
-  { ts: "12:04:29", level: "WARN",  svc: "payment-worker",   msg: "Stripe webhook retry #3 for evt_1N2x \u2014 upstream 503" },
-  { ts: "12:04:28", level: "ERROR", svc: "notification-svc", msg: "Connection refused: smtp.provider.io:587 \u2014 circuit open" },
+  { ts: "12:04:29", level: "WARN",  svc: "payment-worker",   msg: "Stripe webhook retry #3 for evt_1N2x — upstream 503" },
+  { ts: "12:04:28", level: "ERROR", svc: "notification-svc", msg: "Connection refused: smtp.provider.io:587 — circuit open" },
   { ts: "12:04:27", level: "INFO",  svc: "search-index",     msg: "Reindex batch 847/1200 committed (34ms)" },
-  { ts: "12:04:26", level: "INFO",  svc: "cdn-proxy",        msg: "Cache HIT ratio 97.3% \u2014 12.4k req/s" },
-  { ts: "12:04:25", level: "WARN",  svc: "payment-worker",   msg: "Queue depth 847 \u2014 approaching backpressure threshold" },
+  { ts: "12:04:26", level: "INFO",  svc: "cdn-proxy",        msg: "Cache HIT ratio 97.3% — 12.4k req/s" },
+  { ts: "12:04:25", level: "WARN",  svc: "payment-worker",   msg: "Queue depth 847 — approaching backpressure threshold" },
   { ts: "12:04:24", level: "INFO",  svc: "api-gateway",      msg: "POST /api/v2/orders 201 in 89ms" },
-  { ts: "12:04:23", level: "ERROR", svc: "notification-svc", msg: "Failed to deliver email batch #4201 \u2014 23 bounced" },
+  { ts: "12:04:23", level: "ERROR", svc: "notification-svc", msg: "Failed to deliver email batch #4201 — 23 bounced" },
   { ts: "12:04:22", level: "INFO",  svc: "auth-service",     msg: "OAuth2 callback processed for provider github" },
 ] as const;
 
@@ -82,11 +82,11 @@ const C = {
 
 function bar(pct: number, width: number): string {
   const filled = Math.round((pct / 100) * width);
-  return "\u2588".repeat(filled) + "\u2591".repeat(width - filled);
+  return "█".repeat(filled) + "░".repeat(width - filled);
 }
 
 function sparkline(values: number[]): string {
-  const ticks = ["\u2581","\u2582","\u2583","\u2584","\u2585","\u2586","\u2587","\u2588"];
+  const ticks = ["▁","▂","▃","▄","▅","▆","▇","█"];
   const mn = Math.min(...values);
   const mx = Math.max(...values) || 1;
   return values.map(v => ticks[Math.round(((v - mn) / (mx - mn)) * 7)]).join("");
@@ -99,9 +99,9 @@ function levelColor(level: string): string {
 }
 
 function statusBadge(s: string): { label: string; fg: string; bg: string } {
-  if (s === "healthy")  return { label: " \u2714 healthy  ", fg: "#dcfce7", bg: C.greenDim };
-  if (s === "degraded") return { label: " \u26A0 degraded ", fg: "#fef9c3", bg: C.yellowDim };
-  return                       { label: " \u2716 down     ", fg: "#fecaca", bg: C.redDim };
+  if (s === "healthy")  return { label: " ✔ healthy  ", fg: "#dcfce7", bg: C.greenDim };
+  if (s === "degraded") return { label: " ⚠ degraded ", fg: "#fef9c3", bg: C.yellowDim };
+  return                       { label: " ✖ down     ", fg: "#fecaca", bg: C.redDim };
 }
 
 // ── Card with shadow ──────────────────────────────────────────────────
@@ -154,7 +154,7 @@ function Header() {
       border: "single", borderColor: C.accent,
     }}>
       <Text style={{ color: C.accentLight, fontWeight: "bold" }}>
-        {"\u25C6 "}
+        {"◆ "}
       </Text>
       <Text style={{ color: "#ffffff", fontWeight: "bold" }}>
         {"KittyUI"}
@@ -164,7 +164,7 @@ function Header() {
       </Text>
       <Box style={{ flexGrow: 1 }} />
       <Text style={{ color: C.accentLight, dim: true } as any}>
-        {"\u25CF connected"}
+        {"● connected"}
       </Text>
     </Box>
   );
@@ -180,7 +180,7 @@ function SidebarItem({ icon, label, active }: { icon: string; label: string; act
         color: active ? "#ffffff" : C.textMuted,
         fontWeight: active ? "bold" : "normal",
       }}>
-        {active ? "\u2590 " : "  "}
+        {active ? "▐ " : "  "}
         {icon + "  " + label}
       </Text>
     </Box>
@@ -205,7 +205,7 @@ function Sidebar({ activeIndex }: { activeIndex: number }) {
       <Box style={{ flexGrow: 1 }} />
       <Box style={{ paddingLeft: 2 }}>
         <Text style={{ color: C.textMuted, dim: true } as any}>
-          {"\u2191\u2193 navigate"}
+          {"↑↓ navigate"}
         </Text>
       </Box>
     </Box>
@@ -270,21 +270,21 @@ function OverviewPage({ uptime }: { uptime: number }) {
   return (
     <Box style={{ flexDirection: "column", flexGrow: 1, padding: [1, 2], gap: 1 }}>
       <Text style={{ color: C.text, fontWeight: "bold" }}>
-        {"\u25C8  Overview"}
+        {"◈  Overview"}
       </Text>
 
       {/* Stats row */}
       <Box style={{ flexDirection: "row", gap: 1 }}>
-        <StatCard label="REQUESTS/S" value="12,847" sub="\u2191 8.3%" color={C.green} spark={reqSpark} />
-        <StatCard label="ERRORS" value="23" sub="\u2193 0.18%" color={C.red} spark={errSpark} />
-        <StatCard label="P95 LATENCY" value="42ms" sub="\u2193 12%" color={C.yellow} spark={latSpark} />
-        <StatCard label="UPTIME" value={`${uptime}s`} sub="\u25CF live" color={C.cyan} />
+        <StatCard label="REQUESTS/S" value="12,847" sub="↑ 8.3%" color={C.green} spark={reqSpark} />
+        <StatCard label="ERRORS" value="23" sub="↓ 0.18%" color={C.red} spark={errSpark} />
+        <StatCard label="P95 LATENCY" value="42ms" sub="↓ 12%" color={C.yellow} spark={latSpark} />
+        <StatCard label="UPTIME" value={`${uptime}s`} sub="● live" color={C.cyan} />
       </Box>
 
       {/* Activity log */}
       <Box style={{ flexDirection: "row", marginTop: 1 }}>
         <Text style={{ color: C.text, fontWeight: "bold" }}>
-          {"\u25B6  Recent Activity"}
+          {"▶  Recent Activity"}
         </Text>
         <Box style={{ flexGrow: 1 }} />
         <Text style={{ color: C.textMuted, dim: true } as any}>
@@ -333,7 +333,7 @@ function ServiceRow({ name, status, latency, uptimePct }: {
       </Box>
       <Box style={{ width: 10 }}>
         <Text style={{ color: latency > 100 ? C.yellow : C.textDim }}>
-          {latency > 0 ? `${latency}ms` : "  \u2014"}
+          {latency > 0 ? `${latency}ms` : "  —"}
         </Text>
       </Box>
       <Box style={{ width: 18 }}>
@@ -356,7 +356,7 @@ function ServicesPage() {
     <Box style={{ flexDirection: "column", flexGrow: 1, padding: [1, 2], gap: 1 }}>
       <Box style={{ flexDirection: "row" }}>
         <Text style={{ color: C.text, fontWeight: "bold" }}>
-          {"\u25A0  Services"}
+          {"■  Services"}
         </Text>
         <Box style={{ flexGrow: 1 }} />
         <Text style={{ color: C.green, fontWeight: "bold" }}>{`${healthy}`}</Text>
@@ -407,14 +407,14 @@ function LogsPage() {
   return (
     <Box style={{ flexDirection: "column", flexGrow: 1, padding: [1, 2], gap: 1 }}>
       <Text style={{ color: C.text, fontWeight: "bold" }}>
-        {"\u25B6  Logs"}
+        {"▶  Logs"}
       </Text>
 
       {/* Search bar */}
       <Card height={3}>
         <Box style={{ flexDirection: "row" }}>
           <Text style={{ color: C.textMuted }}>
-            {"\u2315 "}
+            {"⌕ "}
           </Text>
           <TextInput
             value={filter}
@@ -469,7 +469,7 @@ function SettingsPage() {
   return (
     <Box style={{ flexDirection: "column", flexGrow: 1, padding: [1, 2], gap: 1 }}>
       <Text style={{ color: C.text, fontWeight: "bold" }}>
-        {"\u2699  Settings"}
+        {"⚙  Settings"}
       </Text>
 
       <Card>
@@ -487,9 +487,9 @@ function SettingsPage() {
         <Text style={{ color: C.textMuted, textDecoration: "underline", marginBottom: 1 } as any}>
           {"NOTIFICATIONS"}
         </Text>
-        <SettingsRow label="Email alerts" value="\u2714 Enabled" />
-        <SettingsRow label="Slack webhook" value="\u2714 Connected" />
-        <SettingsRow label="PagerDuty" value="\u2716 Not configured" />
+        <SettingsRow label="Email alerts" value="✔ Enabled" />
+        <SettingsRow label="Slack webhook" value="✔ Connected" />
+        <SettingsRow label="PagerDuty" value="✖ Not configured" />
       </Card>
     </Box>
   );
@@ -504,16 +504,16 @@ function Footer({ cols, rows }: { cols: number; rows: number }) {
       flexDirection: "row", padding: [0, 2],
     }}>
       <Text style={{ color: C.textMuted }}>
-        {"\u2191\u2193 navigate"}
+        {"↑↓ navigate"}
       </Text>
-      <Text style={{ color: C.borderDim }}>{"  \u2502  "}</Text>
+      <Text style={{ color: C.borderDim }}>{"  │  "}</Text>
       <Text style={{ color: C.textMuted }}>
         {"q quit"}
       </Text>
       <Box style={{ flexGrow: 1 }} />
-      <Text style={{ color: C.green }}>{"\u25CF "}</Text>
+      <Text style={{ color: C.green }}>{"● "}</Text>
       <Text style={{ color: C.textDim, dim: true } as any}>
-        {cols + "\u00D7" + rows}
+        {cols + "×" + rows}
       </Text>
     </Box>
   );
