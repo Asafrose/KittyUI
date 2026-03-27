@@ -3,7 +3,7 @@
  *
  * Showcases: borders, text-overflow/ellipsis, text-decoration, dim,
  * overflow:hidden, colored inline spans, TextInput, flexbox layout,
- * keyboard navigation, live state updates.
+ * keyboard navigation, live state updates, simulated box-shadow.
  */
 
 import { useState, useEffect } from "react";
@@ -27,48 +27,55 @@ const NAV = [
 ] as const;
 
 const SERVICES = [
-  { name: "api-gateway",    status: "healthy",  latency: 12,  uptime: 99.98 },
-  { name: "auth-service",   status: "healthy",  latency: 8,   uptime: 99.99 },
-  { name: "payment-worker", status: "degraded", latency: 142, uptime: 98.40 },
-  { name: "search-index",   status: "healthy",  latency: 34,  uptime: 99.95 },
-  { name: "notification-svc", status: "down",   latency: 0,   uptime: 94.20 },
-  { name: "cdn-proxy",      status: "healthy",  latency: 3,   uptime: 100.0 },
+  { name: "api-gateway",      status: "healthy",  latency: 12,  uptime: 99.98 },
+  { name: "auth-service",     status: "healthy",  latency: 8,   uptime: 99.99 },
+  { name: "payment-worker",   status: "degraded", latency: 142, uptime: 98.40 },
+  { name: "search-index",     status: "healthy",  latency: 34,  uptime: 99.95 },
+  { name: "notification-svc", status: "down",     latency: 0,   uptime: 94.20 },
+  { name: "cdn-proxy",        status: "healthy",  latency: 3,   uptime: 100.0 },
 ] as const;
 
 const LOG_ENTRIES = [
-  { ts: "12:04:31", level: "INFO",  svc: "api-gateway",    msg: "GET /api/v2/users 200 in 12ms" },
-  { ts: "12:04:30", level: "INFO",  svc: "auth-service",   msg: "Token refresh for user_8a3f completed" },
-  { ts: "12:04:29", level: "WARN",  svc: "payment-worker", msg: "Stripe webhook retry #3 for evt_1N2x — upstream 503" },
-  { ts: "12:04:28", level: "ERROR", svc: "notification-svc", msg: "Connection refused: smtp.provider.io:587 — circuit open" },
-  { ts: "12:04:27", level: "INFO",  svc: "search-index",   msg: "Reindex batch 847/1200 committed (34ms)" },
-  { ts: "12:04:26", level: "INFO",  svc: "cdn-proxy",      msg: "Cache HIT ratio 97.3% — 12.4k req/s" },
-  { ts: "12:04:25", level: "WARN",  svc: "payment-worker", msg: "Queue depth 847 — approaching backpressure threshold (1000)" },
-  { ts: "12:04:24", level: "INFO",  svc: "api-gateway",    msg: "POST /api/v2/orders 201 in 89ms" },
-  { ts: "12:04:23", level: "ERROR", svc: "notification-svc", msg: "Failed to deliver email batch #4201 — 23 recipients bounced" },
-  { ts: "12:04:22", level: "INFO",  svc: "auth-service",   msg: "OAuth2 callback processed for provider github" },
+  { ts: "12:04:31", level: "INFO",  svc: "api-gateway",      msg: "GET /api/v2/users 200 in 12ms" },
+  { ts: "12:04:30", level: "INFO",  svc: "auth-service",     msg: "Token refresh for user_8a3f completed" },
+  { ts: "12:04:29", level: "WARN",  svc: "payment-worker",   msg: "Stripe webhook retry #3 for evt_1N2x \u2014 upstream 503" },
+  { ts: "12:04:28", level: "ERROR", svc: "notification-svc", msg: "Connection refused: smtp.provider.io:587 \u2014 circuit open" },
+  { ts: "12:04:27", level: "INFO",  svc: "search-index",     msg: "Reindex batch 847/1200 committed (34ms)" },
+  { ts: "12:04:26", level: "INFO",  svc: "cdn-proxy",        msg: "Cache HIT ratio 97.3% \u2014 12.4k req/s" },
+  { ts: "12:04:25", level: "WARN",  svc: "payment-worker",   msg: "Queue depth 847 \u2014 approaching backpressure threshold" },
+  { ts: "12:04:24", level: "INFO",  svc: "api-gateway",      msg: "POST /api/v2/orders 201 in 89ms" },
+  { ts: "12:04:23", level: "ERROR", svc: "notification-svc", msg: "Failed to deliver email batch #4201 \u2014 23 bounced" },
+  { ts: "12:04:22", level: "INFO",  svc: "auth-service",     msg: "OAuth2 callback processed for provider github" },
 ] as const;
 
 // ── Palette ───────────────────────────────────────────────────────────
 
 const C = {
-  bg:        "#0f172a",
-  surface:   "#1e293b",
-  surfaceHi: "#334155",
-  border:    "#475569",
-  borderDim: "#334155",
-  text:      "#e2e8f0",
-  textDim:   "#94a3b8",
-  textMuted: "#64748b",
-  accent:    "#3b82f6",
-  accentBg:  "#1e40af",
-  green:     "#22c55e",
-  greenDim:  "#166534",
-  yellow:    "#eab308",
-  yellowDim: "#854d0e",
-  red:       "#ef4444",
-  redDim:    "#991b1b",
-  cyan:      "#06b6d4",
-  purple:    "#a78bfa",
+  // Background layers (darkest → lightest)
+  bg:          "#0f172a",  // page background
+  shadow:      "#0a0f1e",  // card shadow (darker than bg)
+  surface:     "#1e293b",  // card surface
+  surfaceHi:   "#283548",  // card hover / raised surface
+  borderCard:  "#3b4a63",  // card border (visible against surface)
+  borderDim:   "#2d3a4f",  // subtle border
+  // Text
+  text:        "#f1f5f9",
+  textSec:     "#cbd5e1",
+  textDim:     "#94a3b8",
+  textMuted:   "#64748b",
+  // Accent
+  accent:      "#3b82f6",
+  accentLight: "#60a5fa",
+  accentBg:    "#1e3a6e",
+  // Semantic
+  green:       "#4ade80",
+  greenDim:    "#166534",
+  yellow:      "#facc15",
+  yellowDim:   "#854d0e",
+  red:         "#f87171",
+  redDim:      "#991b1b",
+  cyan:        "#22d3ee",
+  purple:      "#c4b5fd",
 } as const;
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -80,9 +87,9 @@ function bar(pct: number, width: number): string {
 
 function sparkline(values: number[]): string {
   const ticks = ["\u2581","\u2582","\u2583","\u2584","\u2585","\u2586","\u2587","\u2588"];
-  const min = Math.min(...values);
-  const max = Math.max(...values) || 1;
-  return values.map(v => ticks[Math.round(((v - min) / (max - min)) * 7)]).join("");
+  const mn = Math.min(...values);
+  const mx = Math.max(...values) || 1;
+  return values.map(v => ticks[Math.round(((v - mn) / (mx - mn)) * 7)]).join("");
 }
 
 function levelColor(level: string): string {
@@ -97,6 +104,46 @@ function statusBadge(s: string): { label: string; fg: string; bg: string } {
   return                       { label: " \u2716 down     ", fg: "#fecaca", bg: C.redDim };
 }
 
+// ── Card with shadow ──────────────────────────────────────────────────
+// Simulates a CSS box-shadow by rendering a darker box offset by 1 char
+// behind the main card. The card uses round borders for that modern feel.
+
+function Card({ children, height, style }: {
+  children: React.ReactNode;
+  height?: number;
+  style?: Record<string, any>;
+}) {
+  const cardHeight = height ?? 0;
+  return (
+    <Box style={{
+      flexDirection: "column", flexGrow: style?.flexGrow ?? 0,
+      ...(style?.flexGrow ? {} : {}),
+    }}>
+      {/* Main card */}
+      <Box style={{
+        flexDirection: "column",
+        backgroundColor: C.surface,
+        border: "round",
+        borderColor: C.borderCard,
+        padding: [1, 2],
+        ...(cardHeight ? { height: cardHeight } : {}),
+        ...style,
+        // Override border to always be round
+        ...(style?.border ? {} : { border: "round" as const }),
+      } as any}>
+        {children}
+      </Box>
+      {/* Shadow: a thin dark bar below the card, offset right by 1 */}
+      <Box style={{
+        height: 1,
+        marginLeft: 1,
+        marginRight: 0,
+        backgroundColor: C.shadow,
+      }} />
+    </Box>
+  );
+}
+
 // ── Components ────────────────────────────────────────────────────────
 
 function Header() {
@@ -104,19 +151,20 @@ function Header() {
     <Box style={{
       width: "100%", height: 3, backgroundColor: C.accentBg,
       flexDirection: "row", padding: [1, 2],
+      border: "single", borderColor: C.accent,
     }}>
-      <Text style={{ color: C.accent, fontWeight: "bold" }}>
+      <Text style={{ color: C.accentLight, fontWeight: "bold" }}>
         {"\u25C6 "}
       </Text>
       <Text style={{ color: "#ffffff", fontWeight: "bold" }}>
         {"KittyUI"}
       </Text>
-      <Text style={{ color: "#93c5fd" }}>
+      <Text style={{ color: C.accentLight }}>
         {"  Dashboard"}
       </Text>
       <Box style={{ flexGrow: 1 }} />
-      <Text style={{ color: "#93c5fd", dim: true } as any}>
-        {"v0.1.0"}
+      <Text style={{ color: C.accentLight, dim: true } as any}>
+        {"\u25CF connected"}
       </Text>
     </Box>
   );
@@ -133,7 +181,7 @@ function SidebarItem({ icon, label, active }: { icon: string; label: string; act
         fontWeight: active ? "bold" : "normal",
       }}>
         {active ? "\u2590 " : "  "}
-        {icon + " " + label}
+        {icon + "  " + label}
       </Text>
     </Box>
   );
@@ -142,9 +190,9 @@ function SidebarItem({ icon, label, active }: { icon: string; label: string; act
 function Sidebar({ activeIndex }: { activeIndex: number }) {
   return (
     <Box style={{
-      width: 22, flexDirection: "column", backgroundColor: C.surface,
-      paddingTop: 1, paddingBottom: 1, gap: 1,
-      border: "single", borderColor: C.borderDim,
+      width: 24, flexDirection: "column", backgroundColor: C.surface,
+      paddingTop: 1, paddingBottom: 1,
+      border: "round", borderColor: C.borderCard,
     }}>
       <Box style={{ paddingLeft: 2, paddingBottom: 1 }}>
         <Text style={{ color: C.textMuted, fontWeight: "bold" }}>
@@ -164,7 +212,7 @@ function Sidebar({ activeIndex }: { activeIndex: number }) {
   );
 }
 
-// ── Stats Card ────────────────────────────────────────────────────────
+// ── Stat Card ─────────────────────────────────────────────────────────
 
 function StatCard({
   label, value, sub, color, spark,
@@ -172,22 +220,20 @@ function StatCard({
   label: string; value: string; sub: string; color: string; spark?: number[];
 }) {
   return (
-    <Box style={{
-      flexGrow: 1, height: 7, flexDirection: "column",
-      backgroundColor: C.surface, padding: [1, 2],
-      border: "round", borderColor: C.borderDim,
-    }}>
+    <Card height={8} style={{ flexGrow: 1 }}>
       <Text style={{ color: C.textMuted, dim: true } as any}>{label}</Text>
       <Box style={{ flexDirection: "row", marginTop: 1 }}>
         <Text style={{ color, fontWeight: "bold" }}>{value}</Text>
-        <Text style={{ color: C.textMuted, dim: true } as any}>{"  " + sub}</Text>
+        <Text style={{ color: C.textDim, dim: true } as any}>{"  " + sub}</Text>
       </Box>
       {spark ? (
-        <Text style={{ color, dim: true } as any}>
-          {sparkline(spark)}
-        </Text>
+        <Box style={{ marginTop: 1 }}>
+          <Text style={{ color } as any}>
+            {sparkline(spark)}
+          </Text>
+        </Box>
       ) : null}
-    </Box>
+    </Card>
   );
 }
 
@@ -197,16 +243,16 @@ function LogLine({ ts, level, svc, msg }: { ts: string; level: string; svc: stri
   return (
     <Box style={{ flexDirection: "row", height: 1 }}>
       <Text style={{ color: C.textMuted, dim: true } as any}>
-        {ts + " "}
+        {ts + "  "}
       </Text>
       <Text style={{ color: levelColor(level), fontWeight: level !== "INFO" ? "bold" : "normal" }}>
-        {level.padEnd(5) + " "}
+        {level.padEnd(6)}
       </Text>
       <Text style={{ color: C.purple }}>
         {svc.padEnd(18)}
       </Text>
       <Box style={{ flexGrow: 1, flexShrink: 1 }}>
-        <Text style={{ color: C.text, textOverflow: "ellipsis" }}>
+        <Text style={{ color: C.textSec, textOverflow: "ellipsis" }}>
           {msg}
         </Text>
       </Box>
@@ -222,44 +268,47 @@ function OverviewPage({ uptime }: { uptime: number }) {
   const latSpark = [12, 15, 11, 18, 14, 13, 22, 16, 12, 19, 14, 12];
 
   return (
-    <Box style={{ flexDirection: "column", flexGrow: 1, padding: [1, 2] }}>
+    <Box style={{ flexDirection: "column", flexGrow: 1, padding: [1, 2], gap: 1 }}>
       <Text style={{ color: C.text, fontWeight: "bold" }}>
-        {"Overview"}
+        {"\u25C8  Overview"}
       </Text>
 
-      <Box style={{ flexDirection: "row", height: 7, marginTop: 1, gap: 1 }}>
-        <StatCard label="REQUESTS/S" value="12,847" sub="+8.3%" color={C.green} spark={reqSpark} />
-        <StatCard label="ERRORS" value="23" sub="0.18%" color={C.red} spark={errSpark} />
-        <StatCard label="P95 LATENCY" value="42ms" sub="-12%" color={C.yellow} spark={latSpark} />
-        <StatCard label="UPTIME" value={`${uptime}s`} sub="live" color={C.cyan} />
+      {/* Stats row */}
+      <Box style={{ flexDirection: "row", gap: 1 }}>
+        <StatCard label="REQUESTS/S" value="12,847" sub="\u2191 8.3%" color={C.green} spark={reqSpark} />
+        <StatCard label="ERRORS" value="23" sub="\u2193 0.18%" color={C.red} spark={errSpark} />
+        <StatCard label="P95 LATENCY" value="42ms" sub="\u2193 12%" color={C.yellow} spark={latSpark} />
+        <StatCard label="UPTIME" value={`${uptime}s`} sub="\u25CF live" color={C.cyan} />
       </Box>
 
-      <Box style={{ marginTop: 1, flexDirection: "row" }}>
+      {/* Activity log */}
+      <Box style={{ flexDirection: "row", marginTop: 1 }}>
         <Text style={{ color: C.text, fontWeight: "bold" }}>
-          {"Recent Activity"}
+          {"\u25B6  Recent Activity"}
         </Text>
         <Box style={{ flexGrow: 1 }} />
         <Text style={{ color: C.textMuted, dim: true } as any}>
-          {"showing 8 of 1,204"}
+          {"8 of 1,204"}
         </Text>
       </Box>
 
-      <Box style={{
-        flexDirection: "column", backgroundColor: C.surface,
-        padding: 1, marginTop: 1,
-        border: "round", borderColor: C.borderDim,
-        height: 10, overflow: "hidden",
-      } as any}>
+      <Card style={{ flexGrow: 1, overflow: "hidden" }}>
         {/* Column headers */}
-        <Box style={{ flexDirection: "row", height: 1 }}>
+        <Box style={{ flexDirection: "row", height: 1, marginBottom: 1 }}>
           <Text style={{ color: C.textMuted, textDecoration: "underline" }}>
-            {"TIME     LEVEL SVC                MSG"}
+            {"TIME      LEVEL "}
+          </Text>
+          <Text style={{ color: C.textMuted, textDecoration: "underline" }}>
+            {"SERVICE           "}
+          </Text>
+          <Text style={{ color: C.textMuted, textDecoration: "underline" }}>
+            {"MESSAGE"}
           </Text>
         </Box>
         {LOG_ENTRIES.slice(0, 8).map((e, i) => (
           <LogLine key={i} ts={e.ts} level={e.level} svc={e.svc} msg={e.msg} />
         ))}
-      </Box>
+      </Card>
     </Box>
   );
 }
@@ -284,10 +333,10 @@ function ServiceRow({ name, status, latency, uptimePct }: {
       </Box>
       <Box style={{ width: 10 }}>
         <Text style={{ color: latency > 100 ? C.yellow : C.textDim }}>
-          {latency > 0 ? `${latency}ms` : "  —"}
+          {latency > 0 ? `${latency}ms` : "  \u2014"}
         </Text>
       </Box>
-      <Box style={{ width: 14 }}>
+      <Box style={{ width: 18 }}>
         <Text style={{ color: barColor }}>
           {bar(uptimePct, 8)}
         </Text>
@@ -304,23 +353,19 @@ function ServicesPage() {
   const total = SERVICES.length;
 
   return (
-    <Box style={{ flexDirection: "column", flexGrow: 1, padding: [1, 2] }}>
+    <Box style={{ flexDirection: "column", flexGrow: 1, padding: [1, 2], gap: 1 }}>
       <Box style={{ flexDirection: "row" }}>
         <Text style={{ color: C.text, fontWeight: "bold" }}>
-          {"Services"}
+          {"\u25A0  Services"}
         </Text>
         <Box style={{ flexGrow: 1 }} />
         <Text style={{ color: C.green, fontWeight: "bold" }}>{`${healthy}`}</Text>
         <Text style={{ color: C.textMuted }}>{"/" + total + " healthy"}</Text>
       </Box>
 
-      <Box style={{
-        flexDirection: "column", backgroundColor: C.surface,
-        padding: [1, 2], marginTop: 1,
-        border: "round", borderColor: C.borderDim,
-      }}>
+      <Card>
         {/* Column headers */}
-        <Box style={{ flexDirection: "row", height: 1 }}>
+        <Box style={{ flexDirection: "row", height: 1, marginBottom: 1 }}>
           <Box style={{ width: 20 }}>
             <Text style={{ color: C.textMuted, textDecoration: "underline" }}>{"SERVICE"}</Text>
           </Box>
@@ -330,11 +375,10 @@ function ServicesPage() {
           <Box style={{ width: 10 }}>
             <Text style={{ color: C.textMuted, textDecoration: "underline" }}>{"LATENCY"}</Text>
           </Box>
-          <Box style={{ width: 14 }}>
+          <Box style={{ width: 18 }}>
             <Text style={{ color: C.textMuted, textDecoration: "underline" }}>{"UPTIME"}</Text>
           </Box>
         </Box>
-
         {SERVICES.map(s => (
           <ServiceRow
             key={s.name}
@@ -344,7 +388,7 @@ function ServicesPage() {
             uptimePct={s.uptime}
           />
         ))}
-      </Box>
+      </Card>
     </Box>
   );
 }
@@ -354,77 +398,99 @@ function ServicesPage() {
 function LogsPage() {
   const [filter, setFilter] = useState("");
   const filtered = filter
-    ? LOG_ENTRIES.filter(e => e.msg.toLowerCase().includes(filter.toLowerCase()) || e.svc.includes(filter))
+    ? LOG_ENTRIES.filter(e =>
+        e.msg.toLowerCase().includes(filter.toLowerCase()) ||
+        e.svc.includes(filter) ||
+        e.level.toLowerCase().includes(filter.toLowerCase()))
     : LOG_ENTRIES;
 
   return (
-    <Box style={{ flexDirection: "column", flexGrow: 1, padding: [1, 2] }}>
+    <Box style={{ flexDirection: "column", flexGrow: 1, padding: [1, 2], gap: 1 }}>
       <Text style={{ color: C.text, fontWeight: "bold" }}>
-        {"Logs"}
+        {"\u25B6  Logs"}
       </Text>
 
-      <Box style={{ marginTop: 1, flexDirection: "row", height: 3, border: "round", borderColor: C.borderDim, backgroundColor: C.surface, padding: [1, 1] }}>
-        <Text style={{ color: C.textMuted }}>
-          {"\u2315 "}
-        </Text>
-        <TextInput
-          value={filter}
-          onChange={setFilter}
-          placeholder="Filter logs..."
-          style={{ flexGrow: 1, backgroundColor: C.surface, color: C.text }}
-        />
-      </Box>
+      {/* Search bar */}
+      <Card height={3}>
+        <Box style={{ flexDirection: "row" }}>
+          <Text style={{ color: C.textMuted }}>
+            {"\u2315 "}
+          </Text>
+          <TextInput
+            value={filter}
+            onChange={setFilter}
+            placeholder="Filter by service, level, or message..."
+            style={{ flexGrow: 1, backgroundColor: C.surface, color: C.text }}
+          />
+        </Box>
+      </Card>
 
-      <Box style={{
-        flexDirection: "column", backgroundColor: C.surface,
-        padding: 1, marginTop: 1, flexGrow: 1,
-        border: "round", borderColor: C.borderDim,
-        overflow: "hidden",
-      } as any}>
+      <Card style={{ flexGrow: 1, overflow: "hidden" }}>
+        <Box style={{ flexDirection: "row", height: 1, marginBottom: 1 }}>
+          <Text style={{ color: C.textMuted, textDecoration: "underline" }}>
+            {"TIME      LEVEL "}
+          </Text>
+          <Text style={{ color: C.textMuted, textDecoration: "underline" }}>
+            {"SERVICE           "}
+          </Text>
+          <Text style={{ color: C.textMuted, textDecoration: "underline" }}>
+            {"MESSAGE"}
+          </Text>
+        </Box>
         {filtered.map((e, i) => (
           <LogLine key={i} ts={e.ts} level={e.level} svc={e.svc} msg={e.msg} />
         ))}
         {filtered.length === 0 ? (
-          <Text style={{ color: C.textMuted, dim: true } as any}>
-            {"No logs matching filter."}
-          </Text>
+          <Box style={{ padding: [1, 0] }}>
+            <Text style={{ color: C.textMuted, dim: true } as any}>
+              {"No logs match your filter."}
+            </Text>
+          </Box>
         ) : null}
-      </Box>
+      </Card>
     </Box>
   );
 }
 
 // ── Settings Page ─────────────────────────────────────────────────────
 
-function SettingsPage() {
-  const settings = [
-    { key: "Refresh interval", val: "30s" },
-    { key: "Log retention", val: "7 days" },
-    { key: "Alert threshold", val: "95% uptime" },
-    { key: "Timezone", val: "UTC" },
-    { key: "Theme", val: "Dark" },
-  ];
-
+function SettingsRow({ label, value }: { label: string; value: string }) {
   return (
-    <Box style={{ flexDirection: "column", flexGrow: 1, padding: [1, 2] }}>
+    <Box style={{ flexDirection: "row", height: 1 }}>
+      <Box style={{ width: 24 }}>
+        <Text style={{ color: C.textDim }}>{label}</Text>
+      </Box>
+      <Text style={{ color: C.text }}>{value}</Text>
+    </Box>
+  );
+}
+
+function SettingsPage() {
+  return (
+    <Box style={{ flexDirection: "column", flexGrow: 1, padding: [1, 2], gap: 1 }}>
       <Text style={{ color: C.text, fontWeight: "bold" }}>
-        {"Settings"}
+        {"\u2699  Settings"}
       </Text>
 
-      <Box style={{
-        flexDirection: "column", backgroundColor: C.surface,
-        padding: [1, 2], marginTop: 1,
-        border: "round", borderColor: C.borderDim,
-      }}>
-        {settings.map(s => (
-          <Box key={s.key} style={{ flexDirection: "row", height: 1 }}>
-            <Box style={{ width: 24 }}>
-              <Text style={{ color: C.textDim }}>{s.key}</Text>
-            </Box>
-            <Text style={{ color: C.text, fontWeight: "bold" }}>{s.val}</Text>
-          </Box>
-        ))}
-      </Box>
+      <Card>
+        <Text style={{ color: C.textMuted, textDecoration: "underline", marginBottom: 1 } as any}>
+          {"GENERAL"}
+        </Text>
+        <SettingsRow label="Refresh interval" value="30s" />
+        <SettingsRow label="Log retention" value="7 days" />
+        <SettingsRow label="Alert threshold" value="95% uptime" />
+        <SettingsRow label="Timezone" value="UTC" />
+        <SettingsRow label="Theme" value="Dark" />
+      </Card>
+
+      <Card>
+        <Text style={{ color: C.textMuted, textDecoration: "underline", marginBottom: 1 } as any}>
+          {"NOTIFICATIONS"}
+        </Text>
+        <SettingsRow label="Email alerts" value="\u2714 Enabled" />
+        <SettingsRow label="Slack webhook" value="\u2714 Connected" />
+        <SettingsRow label="PagerDuty" value="\u2716 Not configured" />
+      </Card>
     </Box>
   );
 }
@@ -435,12 +501,12 @@ function Footer({ cols, rows }: { cols: number; rows: number }) {
   return (
     <Box style={{
       width: "100%", height: 1, backgroundColor: C.surface,
-      flexDirection: "row", padding: [0, 1],
+      flexDirection: "row", padding: [0, 2],
     }}>
       <Text style={{ color: C.textMuted }}>
         {"\u2191\u2193 navigate"}
       </Text>
-      <Text style={{ color: C.surfaceHi }}>{"  \u2502  "}</Text>
+      <Text style={{ color: C.borderDim }}>{"  \u2502  "}</Text>
       <Text style={{ color: C.textMuted }}>
         {"q quit"}
       </Text>
