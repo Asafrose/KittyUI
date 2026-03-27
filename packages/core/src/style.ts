@@ -77,6 +77,7 @@ export interface CSSStyle {
     | "strikethrough"
     | "overline"
     | undefined;
+  textOverflow?: "clip" | "ellipsis" | undefined;
   underlineColor?: string | Color | undefined;
   underlineStyle?:
     | "none"
@@ -329,6 +330,9 @@ export const normalizeStyle = (css: CSSStyle): { node: NodeStyle; text: TextStyl
   }
   if (css.underlineStyle !== undefined) {
     text.underlineStyle = css.underlineStyle;
+  }
+  if (css.textOverflow !== undefined) {
+    text.textOverflow = css.textOverflow;
   }
 
   return { node, text };

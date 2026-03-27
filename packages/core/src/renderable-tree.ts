@@ -45,6 +45,9 @@ const mergeVisualStyle = (style: Record<string, unknown>, renderable: Renderable
   if (ts.italic) {
     result.italic = true;
   }
+  if (ts.textOverflow) {
+    result.textOverflow = ts.textOverflow;
+  }
   return result;
 };
 

@@ -305,4 +305,27 @@ describe.skipIf(!canRun)("E2E smoke tests", () => {
 
     bridge.shutdown();
   });
+
+  // =========================================================================
+  // Text overflow ellipsis
+  // =========================================================================
+
+  test("text overflow ellipsis does not crash", () => {
+    const bridge = new Bridge();
+    bridge.init();
+
+    const enc = bridge.getEncoder();
+    enc.createNode(1, { width: 80, height: 24, flexDirection: "column" });
+    enc.createNode(2, { width: 10, height: 1, textOverflow: "ellipsis" });
+    enc.appendChild(1, 2);
+    enc.setText(2, "Very long text that should be truncated with ellipsis");
+    bridge.flushMutations();
+    bridge.renderFrame();
+
+    const layout = bridge.getLayout(2);
+    expect(layout.width).toBeCloseTo(10, 5);
+    expect(layout.height).toBeCloseTo(1, 5);
+
+    bridge.shutdown();
+  });
 });
