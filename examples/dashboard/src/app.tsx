@@ -222,7 +222,7 @@ function RecentSalesCard() {
 // Sparkline chart helpers
 // ---------------------------------------------------------------------------
 
-const SPARK_BLOCKS = [" ", "\u2581", "\u2582", "\u2583", "\u2584", "\u2585", "\u2586", "\u2587", "\u2588"];
+const SPARK_BLOCKS = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
 
 function sparkline(data: number[]): string {
   const max = Math.max(...data);
@@ -529,10 +529,10 @@ function ReportsPage() {
                 : t.mutedFg;
           const statusIcon =
             r.status === "Complete"
-              ? "\u2713"
+              ? "✓"
               : r.status === "In Progress"
-                ? "\u25CF"
-                : "\u25CB";
+                ? "●"
+                : "○";
           return (
             <Box key={r.name} style={{ flexDirection: "row", height: 1, gap: 2 }}>
               <Box style={{ flexGrow: 1 }}>
@@ -629,14 +629,14 @@ function Footer({ cols, rows, uptime }: { cols: number; rows: number; uptime: nu
       }}
     >
       <Text style={{ color: t.mutedFg, dim: true }}>
-        {"\u2190/\u2192 navigate tabs"}
+        {"←/→ navigate tabs"}
       </Text>
       <Box style={{ flexGrow: 1 }} />
       <Text style={{ color: t.mutedFg, dim: true }}>
         {cols + "x" + rows}
       </Text>
       <Text style={{ color: t.success }}>
-        {"\u25CF " + uptime + "s uptime"}
+        {"● " + uptime + "s uptime"}
       </Text>
     </Box>
   );
