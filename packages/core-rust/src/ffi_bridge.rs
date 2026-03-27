@@ -181,6 +181,14 @@ struct EngineState {
     output: Option<Vec<u8>>,
     /// Detected terminal capabilities.
     terminal_caps: terminal_caps::TerminalCaps,
+    /// Terminal pixel width (from CSI 14 t response).
+    pixel_width: Option<u32>,
+    /// Terminal pixel height (from CSI 14 t response).
+    pixel_height: Option<u32>,
+    /// Terminal cell column count (from CSI 18 t response).
+    cell_cols: Option<u32>,
+    /// Terminal cell row count (from CSI 18 t response).
+    cell_rows: Option<u32>,
 }
 
 impl EngineState {
@@ -203,6 +211,10 @@ impl EngineState {
             visual_styles: HashMap::new(),
             output: None,
             terminal_caps: terminal_caps::detect(),
+            pixel_width: None,
+            pixel_height: None,
+            cell_cols: None,
+            cell_rows: None,
         }
     }
 
@@ -358,6 +370,52 @@ pub extern "C" fn set_viewport_size(cols: u16, rows: u16) {
         state.cols = f32::from(cols);
         state.rows = f32::from(rows);
     });
+}
+
+/// Store the terminal's total pixel dimensions (from CSI 14 t response).
+///
+/// When both pixel size and cell count are known the engine can derive
+/// the per-cell pixel dimensions (`pixel_width / cols`, `pixel_height / rows`).
+#[no_mangle]
+pub extern "C" fn set_pixel_size(width: u32, height: u32) {
+    with_engine(|state| {
+        state.pixel_width = Some(width);
+        state.pixel_height = Some(height);
+    });
+}
+
+/// Store the terminal's cell (character) count (from CSI 18 t response).
+///
+/// When both pixel size and cell count are known the engine can derive
+/// the per-cell pixel dimensions.
+#[no_mangle]
+pub extern "C" fn set_cell_count(cols: u32, rows: u32) {
+    with_engine(|state| {
+        state.cell_cols = Some(cols);
+        state.cell_rows = Some(rows);
+    });
+}
+
+/// Retrieve the computed cell pixel width, or 0 if unknown.
+///
+/// Requires both pixel size and cell count to have been set.
+#[no_mangle]
+pub extern "C" fn get_cell_pixel_width() -> u32 {
+    with_engine(|state| match (state.pixel_width, state.cell_cols) {
+        (Some(pw), Some(cc)) if cc > 0 => pw / cc,
+        _ => 0,
+    })
+}
+
+/// Retrieve the computed cell pixel height, or 0 if unknown.
+///
+/// Requires both pixel size and cell count to have been set.
+#[no_mangle]
+pub extern "C" fn get_cell_pixel_height() -> u32 {
+    with_engine(|state| match (state.pixel_height, state.cell_rows) {
+        (Some(ph), Some(cr)) if cr > 0 => ph / cr,
+        _ => 0,
+    })
 }
 
 // ---------------------------------------------------------------------------

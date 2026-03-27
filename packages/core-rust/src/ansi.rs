@@ -436,6 +436,53 @@ pub fn kitty_keyboard_disable() -> Vec<u8> {
 }
 
 // ---------------------------------------------------------------------------
+// Terminal size queries (xterm window ops)
+// ---------------------------------------------------------------------------
+
+/// Query terminal window pixel size: CSI 14 t
+///
+/// The terminal responds with `CSI 4 ; height ; width t`.
+/// This is the fallback for when ioctl(TIOCGWINSZ) does not report pixel
+/// dimensions (e.g. inside tmux/screen).
+#[must_use]
+pub fn query_pixel_size() -> &'static str {
+    "\x1b[14t"
+}
+
+/// Query terminal cell (character) count: CSI 18 t
+///
+/// The terminal responds with `CSI 8 ; rows ; cols t`.
+#[must_use]
+pub fn query_cell_count() -> &'static str {
+    "\x1b[18t"
+}
+
+/// Parse a CSI size response for pixel or cell queries.
+///
+/// Expected formats:
+///   - `\x1b[4;{height};{width}t`  (pixel size response to CSI 14 t)
+///   - `\x1b[8;{rows};{cols}t`     (cell count response to CSI 18 t)
+///
+/// Returns the type discriminator and the two values: `(type, a, b)`.
+///   - type 4 → a = pixel height, b = pixel width
+///   - type 8 → a = rows, b = cols
+///
+/// Returns `None` if the input is not a valid CSI size response.
+#[must_use]
+pub fn parse_csi_size_response(input: &str) -> Option<(u32, u32, u32)> {
+    let body = input.strip_prefix("\x1b[")?;
+    let body = body.strip_suffix('t')?;
+    let parts: Vec<&str> = body.split(';').collect();
+    if parts.len() == 3 {
+        let kind = parts[0].parse::<u32>().ok()?;
+        let a = parts[1].parse::<u32>().ok()?;
+        let b = parts[2].parse::<u32>().ok()?;
+        return Some((kind, a, b));
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
 // Styled cell and run-length encoding
 // ---------------------------------------------------------------------------
 
@@ -1037,5 +1084,62 @@ mod tests {
     #[test]
     fn kitty_keyboard_disable_sequence() {
         assert_eq!(kitty_keyboard_disable(), b"\x1b[<u");
+    }
+
+    // -- Terminal size queries --
+
+    #[test]
+    fn query_pixel_size_is_csi_14t() {
+        assert_eq!(query_pixel_size(), "\x1b[14t");
+    }
+
+    #[test]
+    fn query_cell_count_is_csi_18t() {
+        assert_eq!(query_cell_count(), "\x1b[18t");
+    }
+
+    // -- CSI size response parser --
+
+    #[test]
+    fn parse_pixel_size_response() {
+        let result = parse_csi_size_response("\x1b[4;768;1024t");
+        assert_eq!(result, Some((4, 768, 1024)));
+    }
+
+    #[test]
+    fn parse_cell_count_response() {
+        let result = parse_csi_size_response("\x1b[8;24;80t");
+        assert_eq!(result, Some((8, 24, 80)));
+    }
+
+    #[test]
+    fn parse_csi_size_response_missing_prefix() {
+        assert_eq!(parse_csi_size_response("[4;768;1024t"), None);
+    }
+
+    #[test]
+    fn parse_csi_size_response_missing_suffix() {
+        assert_eq!(parse_csi_size_response("\x1b[4;768;1024"), None);
+    }
+
+    #[test]
+    fn parse_csi_size_response_too_few_parts() {
+        assert_eq!(parse_csi_size_response("\x1b[4;768t"), None);
+    }
+
+    #[test]
+    fn parse_csi_size_response_non_numeric() {
+        assert_eq!(parse_csi_size_response("\x1b[4;abc;1024t"), None);
+    }
+
+    #[test]
+    fn parse_csi_size_response_empty() {
+        assert_eq!(parse_csi_size_response(""), None);
+    }
+
+    #[test]
+    fn parse_csi_size_response_extra_parts_ignored() {
+        // 4 parts instead of 3 — should return None
+        assert_eq!(parse_csi_size_response("\x1b[4;768;1024;0t"), None);
     }
 }
