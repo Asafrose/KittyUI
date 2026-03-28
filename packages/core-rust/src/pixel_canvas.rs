@@ -1219,4 +1219,53 @@ mod tests {
         c.set_pixel(10, 10, [255, 0, 0, 255]);
         assert!(c.data.iter().all(|&b| b == 0));
     }
+
+    // -- draw_glyph with GlyphContent::Color (RGBA) --------------------------
+
+    #[test]
+    fn draw_glyph_color_content_rgba() {
+        let mut canvas = PixelCanvas::new(20, 20);
+        // 2x2 RGBA glyph: red, green, blue, white
+        let data = vec![
+            255, 0, 0, 255, // red
+            0, 255, 0, 255, // green
+            0, 0, 255, 255, // blue
+            255, 255, 255, 255, // white
+        ];
+        canvas.draw_glyph(5.0, 5.0, 2, 2, &data, [0, 0, 0, 255], GlyphContent::Color);
+        let p = canvas.get_pixel(5, 5);
+        assert!(p[0] > 200, "pixel should be reddish, got r={}", p[0]);
+        assert!(p[3] > 200, "pixel should be opaque, got a={}", p[3]);
+        // Second pixel in top row should be greenish
+        let p2 = canvas.get_pixel(6, 5);
+        assert!(p2[1] > 200, "pixel should be greenish, got g={}", p2[1]);
+    }
+
+    #[test]
+    fn draw_glyph_color_content_transparent_pixels_skipped() {
+        let mut canvas = PixelCanvas::new(10, 10);
+        // 1x1 RGBA glyph with alpha=0 (should not draw)
+        let data = vec![255, 0, 0, 0];
+        canvas.draw_glyph(0.0, 0.0, 1, 1, &data, [0, 0, 0, 255], GlyphContent::Color);
+        let p = canvas.get_pixel(0, 0);
+        assert_eq!(p, [0, 0, 0, 0], "transparent color glyph should not draw");
+    }
+
+    // -- interpolate_stops edge cases -----------------------------------------
+
+    #[test]
+    fn interpolate_stops_beyond_last_stop() {
+        let stops = vec![(0.0, [255, 0, 0, 255]), (1.0, [0, 0, 255, 255])];
+        let result = interpolate_stops(1.5, &stops);
+        // t > last stop → should return last stop's color
+        assert_eq!(result, [0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn interpolate_stops_before_first_stop() {
+        let stops = vec![(0.2, [255, 0, 0, 255]), (0.8, [0, 0, 255, 255])];
+        let result = interpolate_stops(0.0, &stops);
+        // t < first stop → should return first stop's color
+        assert_eq!(result, [255, 0, 0, 255]);
+    }
 }

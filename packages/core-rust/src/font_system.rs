@@ -186,6 +186,18 @@ impl FontSystem {
     }
 }
 
+/// Test-only constructor for a `FontSystem` with no fonts loaded.
+#[cfg(test)]
+impl FontSystem {
+    pub fn new_empty() -> Self {
+        Self {
+            sans_regular: None,
+            sans_bold: None,
+            mono_regular: None,
+        }
+    }
+}
+
 impl Default for FontSystem {
     fn default() -> Self {
         Self::new()
@@ -418,5 +430,30 @@ mod tests {
     #[test]
     fn font_system_default_does_not_panic() {
         let _fs = FontSystem::default();
+    }
+
+    // -- FontSystem::new_empty (no fonts loaded) ----------------------------
+
+    #[test]
+    fn pick_font_empty_returns_none() {
+        let fs = FontSystem::new_empty();
+        assert!(fs.pick_font(false).is_none());
+        assert!(fs.pick_font(true).is_none());
+    }
+
+    #[test]
+    fn measure_text_no_fonts_returns_fallback() {
+        let mut fs = FontSystem::new_empty();
+        let (w, h) = fs.measure_text("Hello", 16.0, false, false);
+        // Fallback: width = len * font_size * 0.6 = 5 * 16.0 * 0.6 = 48.0
+        assert!((w - 48.0).abs() < f32::EPSILON, "expected 48.0, got {w}");
+        assert!((h - 16.0).abs() < f32::EPSILON, "expected 16.0, got {h}");
+    }
+
+    #[test]
+    fn rasterize_text_no_fonts_returns_empty() {
+        let mut fs = FontSystem::new_empty();
+        let glyphs = fs.rasterize_text("Hello", 16.0, false, false);
+        assert!(glyphs.is_empty());
     }
 }
