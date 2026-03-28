@@ -496,9 +496,11 @@ export function App() {
     >
       <Header active={activeTab} />
       <Separator />
-      {activeTab === "Overview" && <OverviewPage />}
-      {activeTab === "Analytics" && <AnalyticsPage />}
-      {activeTab === "Reports" && <ReportsPage />}
+      <Box style={{ flexGrow: 1, flexDirection: "column" }}>
+        {activeTab === "Overview" && <OverviewPage />}
+        {activeTab === "Analytics" && <AnalyticsPage />}
+        {activeTab === "Reports" && <ReportsPage />}
+      </Box>
       <Footer />
     </Box>
   );
