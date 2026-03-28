@@ -1548,7 +1548,7 @@ fn intersect_clip(
 }
 
 /// Walk the layout tree recursively and paint each node into the cell buffer.
-/// Used only in test mode for VirtualScreen verification.
+/// Used only in test mode for `VirtualScreen` verification.
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -1816,7 +1816,7 @@ pub extern "C" fn render_frame() {
             let is_test_mode = state.output.is_some();
 
             if is_test_mode {
-                // Test mode: cell-based rendering for VirtualScreen verification.
+                // Test mode: cell-based rendering for `VirtualScreen` verification.
                 state.ensure_buffer_size();
                 state.double_buf.back_mut().clear();
 
