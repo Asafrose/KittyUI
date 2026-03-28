@@ -58,6 +58,7 @@ const symbols = {
   set_cell_count: { args: [FFIType.u32, FFIType.u32], returns: FFIType.void },
   get_cell_pixel_width: { args: [], returns: FFIType.u32 },
   get_cell_pixel_height: { args: [], returns: FFIType.u32 },
+  set_render_mode: { args: [FFIType.u8], returns: FFIType.void },
 } as const;
 
 // -----------------------------------------------------------------------
@@ -335,6 +336,13 @@ export class Bridge {
   getCellPixelHeight(): number {
     this.assertReady();
     return this.lib!.symbols.get_cell_pixel_height();
+  }
+
+  /** Set the rendering mode: "cell" (text-only), "pixel" (Kitty graphics), or "auto" (detect). */
+  setRenderMode(mode: "cell" | "pixel" | "auto"): void {
+    this.assertReady();
+    const code = mode === "cell" ? 0 : mode === "pixel" ? 1 : 2;
+    this.lib!.symbols.set_render_mode(code);
   }
 
   /** Decode a raw event buffer and dispatch to listeners. */

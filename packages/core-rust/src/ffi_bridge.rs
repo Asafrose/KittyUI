@@ -16,6 +16,7 @@ use crate::hit_test::HitTester;
 use crate::image;
 use crate::layout::{LayoutNodeId, LayoutTree, NodeStyle};
 use crate::pixel_canvas::PixelCanvas;
+use crate::pixel_renderer::{self, PixelRenderer};
 use crate::terminal_caps;
 
 // ---------------------------------------------------------------------------
@@ -190,6 +191,18 @@ struct TextColorSpan {
 // Global engine state
 // ---------------------------------------------------------------------------
 
+/// Rendering mode selection.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum RenderMode {
+    /// Traditional cell-based rendering (default).
+    Cell,
+    /// Full-frame pixel rendering via Kitty graphics protocol.
+    Pixel,
+    /// Auto-detect: use pixel rendering when Kitty graphics is available.
+    #[default]
+    Auto,
+}
+
 struct EngineState {
     layout: LayoutTree,
     /// Maps user-facing u32 node ids to Taffy `LayoutNodeId` handles.
@@ -240,6 +253,10 @@ struct EngineState {
     next_gradient_image_id: u32,
     /// Shadow images pending output (collected during paint, flushed in render).
     shadow_images_pending: Vec<ShadowImage>,
+    /// Pixel renderer for full-frame Kitty graphics output.
+    pixel_renderer: Option<PixelRenderer>,
+    /// Rendering mode (cell, pixel, or auto-detect).
+    render_mode: RenderMode,
 }
 
 /// A gradient rendered to pixel data, ready for Kitty protocol output.
@@ -287,6 +304,8 @@ impl EngineState {
             gradient_images: Vec::new(),
             next_gradient_image_id: 50000,
             shadow_images_pending: Vec::new(),
+            pixel_renderer: None,
+            render_mode: RenderMode::default(),
         }
     }
 
@@ -313,6 +332,89 @@ impl EngineState {
         if self.double_buf.width() != w || self.double_buf.height() != h {
             self.double_buf.resize(w, h);
         }
+    }
+}
+
+impl pixel_renderer::PaintTree for EngineState {
+    fn root_node(&self) -> Option<u32> {
+        self.root_node
+    }
+
+    fn node_layout(&self, node_id: u32) -> Option<pixel_renderer::NodeLayout> {
+        let layout_id = self.node_map.get(&node_id)?;
+        let layout = self.layout.get_layout(*layout_id).ok()?;
+        Some(pixel_renderer::NodeLayout {
+            x: layout.x,
+            y: layout.y,
+            width: layout.width,
+            height: layout.height,
+        })
+    }
+
+    fn node_style(&self, node_id: u32) -> Option<pixel_renderer::PixelNodeStyle> {
+        let style = self.visual_styles.get(&node_id)?;
+        Some(pixel_renderer::PixelNodeStyle {
+            bg: style.bg,
+            fg: style.fg,
+            bold: style.bold,
+            italic: style.italic,
+            underline: style.underline,
+            strikethrough: style.strikethrough,
+            dim: style.dim,
+            border_radius: style.border_radius,
+            overflow_hidden: style.overflow == Overflow::Hidden,
+            border_thickness: style.border.as_ref().map_or(0.0, |_| 1.0),
+            border_color: style.border.as_ref().and_then(|b| b.color),
+            box_shadow: style
+                .box_shadow
+                .as_ref()
+                .map(|s| pixel_renderer::PixelBoxShadow {
+                    offset_x: s.offset_x,
+                    offset_y: s.offset_y,
+                    blur_radius: s.blur_radius,
+                    spread_radius: s.spread_radius,
+                    color: s.color,
+                }),
+            gradient: style
+                .gradient
+                .as_ref()
+                .map(|g| pixel_renderer::PixelGradient {
+                    angle_deg: g.angle_deg,
+                    stops: g.stops.iter().map(|s| (s.position, s.color)).collect(),
+                }),
+        })
+    }
+
+    fn text_content(&self, node_id: u32) -> Option<&str> {
+        self.text_content.get(&node_id).map(String::as_str)
+    }
+
+    fn text_spans(&self, node_id: u32) -> Vec<pixel_renderer::PixelTextSpan> {
+        self.text_spans
+            .get(&node_id)
+            .map(|spans| {
+                spans
+                    .iter()
+                    .map(|s| pixel_renderer::PixelTextSpan {
+                        start: s.start,
+                        end: s.end,
+                        fg: color_to_rgba(s.fg, 255),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn children(&self, node_id: u32) -> Vec<u32> {
+        let Some(&layout_id) = self.node_map.get(&node_id) else {
+            return vec![];
+        };
+        self.layout
+            .children(layout_id)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|lid| self.reverse_node_map.get(&lid).copied())
+            .collect()
     }
 }
 
@@ -1928,136 +2030,174 @@ pub extern "C" fn render_frame() {
             }
         }
 
-        // 2. Paint cells and diff only when dirty.
+        // 2. Paint and output only when dirty.
         if state.dirty {
-            state.ensure_buffer_size();
+            // Determine whether to use pixel rendering for this frame.
+            let use_pixel = match state.render_mode {
+                RenderMode::Pixel => true,
+                RenderMode::Auto => state.terminal_caps.kitty_graphics,
+                RenderMode::Cell => false,
+            };
 
-            // Clear back buffer.
-            state.double_buf.back_mut().clear();
+            if use_pixel {
+                // ---- Full-frame pixel rendering path ----
 
-            // Walk all nodes and paint them.
-            state.gradient_images.clear();
-            if let Some(root_id) = state.root_node {
-                // We need to pass state immutably while mutating the buffer.
-                // Temporarily take the back buffer out so we can pass state
-                // to `paint_node` while mutating the buffer.
-                let mut back_buf = {
-                    let back = state.double_buf.back_mut();
-                    let w = back.width();
-                    let h = back.height();
-                    let mut tmp = crate::cell::CellBuffer::new(w, h);
-                    std::mem::swap(back, &mut tmp);
-                    tmp
-                };
-
-                let mut pixel_buf = std::mem::take(&mut state.pixel_output);
-                // Also take gradient_images out so paint_node can fill it.
-                let mut grad_images = std::mem::take(&mut state.gradient_images);
-                let mut next_grad_id = state.next_gradient_image_id;
-                let mut shadow_images: Vec<ShadowImage> = Vec::new();
-
-                paint_node(
-                    state,
-                    &mut back_buf,
-                    &mut pixel_buf,
-                    &mut grad_images,
-                    &mut next_grad_id,
-                    &mut shadow_images,
-                    root_id,
-                    0.0,
-                    0.0,
-                    None,
-                    None,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                    None,
-                );
-
-                // Restore gradient images and id counter.
-                state.gradient_images = grad_images;
-                state.next_gradient_image_id = next_grad_id;
-
-                // Swap the painted buffer back and restore pixel output.
-                std::mem::swap(state.double_buf.back_mut(), &mut back_buf);
-                state.pixel_output = pixel_buf;
-
-                // Collect shadow images for output later (after delete).
-                state.shadow_images_pending = shadow_images;
-            }
-
-            // --- Output pipeline ---
-            // Step 1: Delete ALL previous Kitty images (prevents ghosting on resize).
-            let has_shadows = !state.shadow_images_pending.is_empty();
-            let has_pixels = !state.pixel_output.is_empty();
-            let has_grads = !state.gradient_images.is_empty();
-            if has_shadows || has_pixels || has_grads {
-                let delete_cmd = crate::image::encode_delete(crate::image::DeleteTarget::All);
-                state.write_output(&delete_cmd);
-            }
-
-            // Step 2: Output shadow images (z=-2, behind everything).
-            let shadows = std::mem::take(&mut state.shadow_images_pending);
-            for shadow in &shadows {
-                let img_id = crate::image::ImageCache::next_id();
-                if let Ok(transmit_data) = crate::image::encode_transmit(&shadow.data, img_id) {
-                    state.write_output(&transmit_data);
-                    let move_cursor = format!("\x1b[{};{}H", shadow.row + 1, shadow.col + 1);
-                    state.write_output(move_cursor.as_bytes());
-                    let display_cmd = crate::image::encode_display_z(img_id, None, -2);
-                    state.write_output(&display_cmd);
+                // Lazily initialise the pixel renderer.
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                if state.pixel_renderer.is_none() {
+                    let cell_w = state.terminal_caps.cell_pixel_width;
+                    let cell_h = state.terminal_caps.cell_pixel_height;
+                    state.pixel_renderer = Some(PixelRenderer::new(
+                        state.cols as u32,
+                        state.rows as u32,
+                        cell_w,
+                        cell_h,
+                    ));
                 }
-            }
-            drop(shadows);
 
-            // Step 3: Output pixel images — border-radius backgrounds (z=-1).
-            if !state.pixel_output.is_empty() {
-                let pixel_data = std::mem::take(&mut state.pixel_output);
-                state.write_output(&pixel_data);
-            }
-
-            // Step 4: Output gradient images (z=-1).
-            let grad_images = std::mem::take(&mut state.gradient_images);
-            for grad_img in &grad_images {
-                if let Ok(img_data) = grad_img.canvas.to_image_data() {
-                    if let Ok(transmit_data) = image::encode_transmit(&img_data, grad_img.image_id)
-                    {
-                        state.write_output(&transmit_data);
-                        let cursor_move =
-                            format!("\x1b[{};{}H", grad_img.row + 1, grad_img.col + 1);
-                        state.write_output(cursor_move.as_bytes());
-                        let display = image::encode_display_z(grad_img.image_id, None, -1);
-                        state.write_output(&display);
-                    }
-                }
-            }
-            drop(grad_images);
-
-            // Step 5: Output cell content (text on top, z=0).
-            // When pixel rendering is active, use full_render instead of diff
-            // to prevent ghosting artifacts from partial updates.
-            let is_test_mode = state.output.is_some();
-            let use_full_render = is_test_mode || has_shadows || has_pixels || has_grads;
-            if use_full_render {
-                // Clear screen first, then render all cells.
-                if !is_test_mode {
-                    state.write_output(b"\x1b[2J");
-                }
-                let rendered = state.double_buf.full_render();
-                if !rendered.is_empty() {
-                    state.write_output(&rendered);
+                // Take the pixel renderer out temporarily to avoid
+                // borrow conflicts (paint_frame needs &EngineState while
+                // the renderer itself lives inside EngineState).
+                if let Some(mut pr) = state.pixel_renderer.take() {
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    pr.resize(state.cols as u32, state.rows as u32);
+                    let output = pr.paint_frame(state);
+                    state.write_output(&output);
+                    state.pixel_renderer = Some(pr);
                 }
             } else {
-                let diff = state.double_buf.diff();
-                if !diff.is_empty() {
-                    state.write_output(&diff);
-                }
-            }
+                // ---- Cell-based rendering path (existing) ----
 
-            // Swap buffers.
-            state.double_buf.swap_no_clear();
+                state.ensure_buffer_size();
+
+                // Clear back buffer.
+                state.double_buf.back_mut().clear();
+
+                // Walk all nodes and paint them.
+                state.gradient_images.clear();
+                if let Some(root_id) = state.root_node {
+                    // We need to pass state immutably while mutating the buffer.
+                    // Temporarily take the back buffer out so we can pass state
+                    // to `paint_node` while mutating the buffer.
+                    let mut back_buf = {
+                        let back = state.double_buf.back_mut();
+                        let w = back.width();
+                        let h = back.height();
+                        let mut tmp = crate::cell::CellBuffer::new(w, h);
+                        std::mem::swap(back, &mut tmp);
+                        tmp
+                    };
+
+                    let mut pixel_buf = std::mem::take(&mut state.pixel_output);
+                    // Also take gradient_images out so paint_node can fill it.
+                    let mut grad_images = std::mem::take(&mut state.gradient_images);
+                    let mut next_grad_id = state.next_gradient_image_id;
+                    let mut shadow_images: Vec<ShadowImage> = Vec::new();
+
+                    paint_node(
+                        state,
+                        &mut back_buf,
+                        &mut pixel_buf,
+                        &mut grad_images,
+                        &mut next_grad_id,
+                        &mut shadow_images,
+                        root_id,
+                        0.0,
+                        0.0,
+                        None,
+                        None,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        None,
+                    );
+
+                    // Restore gradient images and id counter.
+                    state.gradient_images = grad_images;
+                    state.next_gradient_image_id = next_grad_id;
+
+                    // Swap the painted buffer back and restore pixel output.
+                    std::mem::swap(state.double_buf.back_mut(), &mut back_buf);
+                    state.pixel_output = pixel_buf;
+
+                    // Collect shadow images for output later (after delete).
+                    state.shadow_images_pending = shadow_images;
+                }
+
+                // --- Output pipeline ---
+                // Step 1: Delete ALL previous Kitty images (prevents ghosting on resize).
+                let has_shadows = !state.shadow_images_pending.is_empty();
+                let has_pixels = !state.pixel_output.is_empty();
+                let has_grads = !state.gradient_images.is_empty();
+                if has_shadows || has_pixels || has_grads {
+                    let delete_cmd = crate::image::encode_delete(crate::image::DeleteTarget::All);
+                    state.write_output(&delete_cmd);
+                }
+
+                // Step 2: Output shadow images (z=-2, behind everything).
+                let shadows = std::mem::take(&mut state.shadow_images_pending);
+                for shadow in &shadows {
+                    let img_id = crate::image::ImageCache::next_id();
+                    if let Ok(transmit_data) = crate::image::encode_transmit(&shadow.data, img_id) {
+                        state.write_output(&transmit_data);
+                        let move_cursor = format!("\x1b[{};{}H", shadow.row + 1, shadow.col + 1);
+                        state.write_output(move_cursor.as_bytes());
+                        let display_cmd = crate::image::encode_display_z(img_id, None, -2);
+                        state.write_output(&display_cmd);
+                    }
+                }
+                drop(shadows);
+
+                // Step 3: Output pixel images — border-radius backgrounds (z=-1).
+                if !state.pixel_output.is_empty() {
+                    let pixel_data = std::mem::take(&mut state.pixel_output);
+                    state.write_output(&pixel_data);
+                }
+
+                // Step 4: Output gradient images (z=-1).
+                let grad_images = std::mem::take(&mut state.gradient_images);
+                for grad_img in &grad_images {
+                    if let Ok(img_data) = grad_img.canvas.to_image_data() {
+                        if let Ok(transmit_data) =
+                            image::encode_transmit(&img_data, grad_img.image_id)
+                        {
+                            state.write_output(&transmit_data);
+                            let cursor_move =
+                                format!("\x1b[{};{}H", grad_img.row + 1, grad_img.col + 1);
+                            state.write_output(cursor_move.as_bytes());
+                            let display = image::encode_display_z(grad_img.image_id, None, -1);
+                            state.write_output(&display);
+                        }
+                    }
+                }
+                drop(grad_images);
+
+                // Step 5: Output cell content (text on top, z=0).
+                // When pixel rendering is active, use full_render instead of diff
+                // to prevent ghosting artifacts from partial updates.
+                let is_test_mode = state.output.is_some();
+                let use_full_render = is_test_mode || has_shadows || has_pixels || has_grads;
+                if use_full_render {
+                    // Clear screen first, then render all cells.
+                    if !is_test_mode {
+                        state.write_output(b"\x1b[2J");
+                    }
+                    let rendered = state.double_buf.full_render();
+                    if !rendered.is_empty() {
+                        state.write_output(&rendered);
+                    }
+                } else {
+                    let diff = state.double_buf.diff();
+                    if !diff.is_empty() {
+                        state.write_output(&diff);
+                    }
+                }
+
+                // Swap buffers.
+                state.double_buf.swap_no_clear();
+            }
         }
 
         state.dirty = false;
@@ -2071,6 +2211,23 @@ pub extern "C" fn render_frame() {
                 cb(ptr, len);
             }
             state.event_buffer.clear();
+        }
+    });
+}
+
+/// Set the rendering mode: 0 = Cell, 1 = Pixel, 2+ = Auto.
+#[no_mangle]
+pub extern "C" fn set_render_mode(mode: u8) {
+    with_engine(|state| {
+        state.render_mode = match mode {
+            0 => RenderMode::Cell,
+            1 => RenderMode::Pixel,
+            _ => RenderMode::Auto,
+        };
+        // Invalidate any cached pixel renderer when switching modes so it
+        // gets re-created with current dimensions on the next frame.
+        if state.render_mode == RenderMode::Cell {
+            state.pixel_renderer = None;
         }
     });
 }
