@@ -21,7 +21,7 @@ import type { CSSStyle, KeyboardEvent as KittyKeyboardEvent } from "@kittyui/cor
 
 const t = {
   bg: "#09090b",          // zinc-950
-  card: "#111113",        // slightly lighter than bg so rounded corners show
+  card: "#18181b",        // zinc-900 (shadcn dark card)
   cardBorder: "#27272a",  // zinc-800
   muted: "#27272a",       // zinc-800
   mutedFg: "#a1a1aa",     // zinc-400
@@ -51,7 +51,7 @@ const AVATAR_COLORS: Record<string, string> = {
 
 const cardStyle: CSSStyle = {
   backgroundColor: t.card,
-  borderRadius: 8,
+  borderRadius: 16,
   border: "round" as const,
   borderColor: "#27272a",
   padding: [1, 2] as [number, number],
