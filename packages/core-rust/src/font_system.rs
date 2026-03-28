@@ -18,7 +18,8 @@
 )]
 
 use cosmic_text::{
-    Attrs, Buffer, Family, FontSystem as CosmicFontSystem, Metrics, Shaping, SwashCache, Weight,
+    Attrs, Buffer, Family, FontSystem as CosmicFontSystem, Metrics, Shaping, SwashCache,
+    SwashContent, Weight,
 };
 
 /// Manages font loading, text measurement, and glyph rasterization.
@@ -41,12 +42,26 @@ impl FontSystem {
     ///
     /// Returns `(width, height)` in pixels.  For an empty string the width
     /// is zero and the height equals the font size.
-    pub fn measure_text(&mut self, text: &str, font_size: f32, bold: bool) -> (f32, f32) {
+    pub fn measure_text(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        bold: bool,
+        italic: bool,
+    ) -> (f32, f32) {
         let metrics = Metrics::new(font_size, font_size * 1.2);
         let mut buffer = Buffer::new(&mut self.font_system, metrics);
 
         let weight = if bold { Weight::BOLD } else { Weight::NORMAL };
-        let attrs = Attrs::new().family(Family::Monospace).weight(weight);
+        let style = if italic {
+            cosmic_text::Style::Italic
+        } else {
+            cosmic_text::Style::Normal
+        };
+        let attrs = Attrs::new()
+            .family(Family::Monospace)
+            .weight(weight)
+            .style(style);
 
         buffer.set_text(&mut self.font_system, text, attrs, Shaping::Advanced);
         buffer.shape_until_scroll(&mut self.font_system, false);
@@ -101,11 +116,18 @@ impl FontSystem {
                     .swash_cache
                     .get_image(&mut self.font_system, physical.cache_key)
                 {
+                    let content = match image.content {
+                        SwashContent::Mask => GlyphContent::Mask,
+                        SwashContent::Color => GlyphContent::Color,
+                        // SubpixelMask is not supported; skip these glyphs.
+                        SwashContent::SubpixelMask => continue,
+                    };
                     glyphs.push(RasterizedGlyph {
                         x: physical.x as f32 + image.placement.left as f32,
                         y: run.line_y + physical.y as f32 - image.placement.top as f32,
                         width: image.placement.width,
                         height: image.placement.height,
+                        content,
                         data: image.data.clone(),
                     });
                 }
@@ -127,6 +149,17 @@ impl Default for FontSystem {
     }
 }
 
+/// The pixel format of a rasterized glyph's data buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GlyphContent {
+    /// 8-bit alpha mask (1 byte per pixel). Typical for regular text glyphs.
+    /// Buffer length = `width * height`.
+    Mask,
+    /// 32-bit RGBA color bitmap (4 bytes per pixel). Used for color emoji.
+    /// Buffer length = `width * height * 4`.
+    Color,
+}
+
 /// A rasterized glyph with position and coverage bitmap.
 #[derive(Debug, Clone)]
 pub struct RasterizedGlyph {
@@ -138,8 +171,11 @@ pub struct RasterizedGlyph {
     pub width: u32,
     /// Bitmap height in pixels.
     pub height: u32,
-    /// Coverage bitmap (grayscale, 1 byte per pixel).
-    /// Length = `width * height`.
+    /// Pixel format of the data buffer.
+    pub content: GlyphContent,
+    /// Glyph bitmap data. The format depends on [`content`](Self::content):
+    /// - [`GlyphContent::Mask`]: 1 byte per pixel (alpha), length = `width * height`.
+    /// - [`GlyphContent::Color`]: 4 bytes per pixel (RGBA), length = `width * height * 4`.
     pub data: Vec<u8>,
 }
 
@@ -159,7 +195,7 @@ mod tests {
     #[test]
     fn measure_text_returns_nonzero_dimensions() {
         let mut fs = FontSystem::new();
-        let (w, h) = fs.measure_text("Hello", 16.0, false);
+        let (w, h) = fs.measure_text("Hello", 16.0, false, false);
         assert!(w > 0.0, "width should be > 0, got {w}");
         assert!(h > 0.0, "height should be > 0, got {h}");
     }
@@ -176,7 +212,7 @@ mod tests {
     #[test]
     fn measure_empty_string_returns_zero_width() {
         let mut fs = FontSystem::new();
-        let (w, h) = fs.measure_text("", 16.0, false);
+        let (w, h) = fs.measure_text("", 16.0, false, false);
         assert!(
             w.abs() < f32::EPSILON,
             "empty string width should be 0, got {w}"
@@ -185,10 +221,30 @@ mod tests {
     }
 
     #[test]
+    fn rasterize_glyph_data_length_matches_content() {
+        let mut fs = FontSystem::new();
+        let glyphs = fs.rasterize_text("A", 16.0, false, false);
+        assert!(!glyphs.is_empty(), "should produce at least 1 glyph");
+        let g = &glyphs[0];
+        let expected_len = match g.content {
+            GlyphContent::Mask => (g.width * g.height) as usize,
+            GlyphContent::Color => (g.width * g.height * 4) as usize,
+        };
+        assert_eq!(
+            g.data.len(),
+            expected_len,
+            "data length should match content type: {:?}, {}x{}",
+            g.content,
+            g.width,
+            g.height
+        );
+    }
+
+    #[test]
     fn bold_monospace_has_similar_width() {
         let mut fs = FontSystem::new();
-        let (w_normal, _) = fs.measure_text("Hello", 16.0, false);
-        let (w_bold, _) = fs.measure_text("Hello", 16.0, true);
+        let (w_normal, _) = fs.measure_text("Hello", 16.0, false, false);
+        let (w_bold, _) = fs.measure_text("Hello", 16.0, true, false);
         // Monospace fonts should have identical or very similar widths
         let diff = (w_normal - w_bold).abs();
         assert!(
