@@ -974,4 +974,249 @@ mod tests {
             p[3]
         );
     }
+
+    // -- fill_linear_gradient with angle 0deg (left-to-right) ----------------
+
+    #[test]
+    fn linear_gradient_0deg_left_to_right_variation() {
+        let mut c = PixelCanvas::new(100, 10);
+        let stops = vec![(0.0, [255, 0, 0, 255]), (1.0, [0, 0, 255, 255])];
+        c.fill_linear_gradient(0.0, 0.0, 100.0, 10.0, 0.0, &stops);
+
+        let left = c.get_pixel(5, 5);
+        let mid = c.get_pixel(50, 5);
+        let right = c.get_pixel(95, 5);
+
+        // Left should be mostly red
+        assert!(
+            left[0] > left[2],
+            "left: red {} > blue {}",
+            left[0],
+            left[2]
+        );
+        // Mid should have both
+        assert!(
+            mid[0] > 50 && mid[2] > 50,
+            "mid should have both red and blue"
+        );
+        // Right should be mostly blue
+        assert!(
+            right[2] > right[0],
+            "right: blue {} > red {}",
+            right[2],
+            right[0]
+        );
+    }
+
+    // -- fill_linear_gradient with angle 90deg (top-to-bottom) ---------------
+
+    #[test]
+    fn linear_gradient_90deg_top_to_bottom() {
+        let mut c = PixelCanvas::new(10, 100);
+        let stops = vec![(0.0, [255, 0, 0, 255]), (1.0, [0, 0, 255, 255])];
+        c.fill_linear_gradient(0.0, 0.0, 10.0, 100.0, 90.0, &stops);
+
+        let top = c.get_pixel(5, 5);
+        let bottom = c.get_pixel(5, 95);
+
+        // Top should be mostly red
+        assert!(top[0] > top[2], "top: red {} > blue {}", top[0], top[2]);
+        // Bottom should be mostly blue
+        assert!(
+            bottom[2] > bottom[0],
+            "bottom: blue {} > red {}",
+            bottom[2],
+            bottom[0]
+        );
+    }
+
+    // -- fill_linear_gradient with 3+ color stops ----------------------------
+
+    #[test]
+    fn linear_gradient_three_stops() {
+        let mut c = PixelCanvas::new(300, 1);
+        let stops = vec![
+            (0.0, [255, 0, 0, 255]),
+            (0.5, [0, 255, 0, 255]),
+            (1.0, [0, 0, 255, 255]),
+        ];
+        c.fill_linear_gradient(0.0, 0.0, 300.0, 1.0, 0.0, &stops);
+
+        // Near left (t~0): should be reddish
+        let left = c.get_pixel(10, 0);
+        assert!(
+            left[0] > left[1] && left[0] > left[2],
+            "left should be red-dominant"
+        );
+
+        // Near middle (t~0.5): should be greenish
+        let mid = c.get_pixel(150, 0);
+        assert!(
+            mid[1] > mid[0] && mid[1] > mid[2],
+            "mid should be green-dominant"
+        );
+
+        // Near right (t~1): should be bluish
+        let right = c.get_pixel(290, 0);
+        assert!(
+            right[2] > right[0] && right[2] > right[1],
+            "right should be blue-dominant"
+        );
+    }
+
+    // -- fill_linear_gradient_rounded ----------------------------------------
+
+    #[test]
+    fn linear_gradient_rounded_clips_corners() {
+        let mut c = PixelCanvas::new(100, 100);
+        let stops = vec![(0.0, [255, 0, 0, 255]), (1.0, [0, 0, 255, 255])];
+        c.fill_linear_gradient_rounded(0.0, 0.0, 100.0, 100.0, 20.0, &stops, 20.0);
+
+        // Corner (0,0) should be transparent or very low alpha (rounded off)
+        let corner = c.get_pixel(0, 0);
+        assert!(
+            corner[3] < 10,
+            "corner should be nearly transparent, alpha={}",
+            corner[3]
+        );
+
+        // Center should be fully opaque
+        let center = c.get_pixel(50, 50);
+        assert!(
+            center[3] > 200,
+            "center should be opaque, alpha={}",
+            center[3]
+        );
+    }
+
+    #[test]
+    fn linear_gradient_rounded_single_stop() {
+        let mut c = PixelCanvas::new(40, 40);
+        let stops = vec![(0.5, [128, 64, 32, 255])];
+        c.fill_linear_gradient_rounded(0.0, 0.0, 40.0, 40.0, 8.0, &stops, 8.0);
+
+        // Center should be the single stop color
+        let center = c.get_pixel(20, 20);
+        assert_eq!(center[0], 128);
+        assert_eq!(center[1], 64);
+        assert_eq!(center[2], 32);
+    }
+
+    #[test]
+    fn linear_gradient_rounded_empty_stops() {
+        let mut c = PixelCanvas::new(10, 10);
+        c.fill_linear_gradient_rounded(0.0, 0.0, 10.0, 10.0, 0.0, &[], 4.0);
+        // Should be a no-op
+        assert!(c.data.iter().all(|&b| b == 0));
+    }
+
+    // -- draw_border with thickness > radius ---------------------------------
+
+    #[test]
+    fn draw_border_thick_border_larger_than_radius() {
+        let mut c = PixelCanvas::new(60, 60);
+        // thickness=10, radius=4: thickness > radius
+        c.draw_border(0.0, 0.0, 60.0, 60.0, 10.0, [4.0; 4], [255, 0, 0, 255]);
+
+        // Border pixels near edge should be filled
+        let edge = c.get_pixel(30, 5);
+        assert!(edge[3] > 0, "thick border near edge should be visible");
+
+        // Interior should be empty (center far enough from border)
+        let interior = c.get_pixel(30, 30);
+        assert_eq!(interior[3], 0, "interior should be transparent");
+    }
+
+    // -- draw_text with bold -------------------------------------------------
+
+    #[test]
+    fn draw_text_bold_produces_pixels() {
+        let mut c = PixelCanvas::new(100, 40);
+        let mut fs = crate::font_system::FontSystem::new();
+        c.draw_text(
+            0.0,
+            0.0,
+            "Bold",
+            [255, 255, 255, 255],
+            16.0,
+            true, // bold
+            false,
+            &mut fs,
+        );
+        let non_transparent = c.data.chunks_exact(4).filter(|px| px[3] > 0).count();
+        assert!(
+            non_transparent > 0,
+            "bold text should produce visible pixels"
+        );
+    }
+
+    // -- draw_text with empty string -----------------------------------------
+
+    #[test]
+    fn draw_text_empty_string_is_noop() {
+        let mut c = PixelCanvas::new(100, 40);
+        let mut fs = crate::font_system::FontSystem::new();
+        c.draw_text(
+            0.0,
+            0.0,
+            "",
+            [255, 255, 255, 255],
+            16.0,
+            false,
+            false,
+            &mut fs,
+        );
+        assert!(
+            c.data.iter().all(|&b| b == 0),
+            "empty string should not produce any pixels"
+        );
+    }
+
+    // -- to_image_data conversion (additional) --------------------------------
+
+    #[test]
+    fn to_image_data_with_filled_canvas() {
+        let mut c = PixelCanvas::new(8, 8);
+        c.fill([100, 200, 50, 255]);
+        let img = c.to_image_data().unwrap();
+        assert_eq!(img.width, 8);
+        assert_eq!(img.height, 8);
+        // Verify content matches
+        assert_eq!(img.rgba[0], 100);
+        assert_eq!(img.rgba[1], 200);
+        assert_eq!(img.rgba[2], 50);
+        assert_eq!(img.rgba[3], 255);
+    }
+
+    // -- new with zero dimensions -------------------------------------------
+
+    #[test]
+    fn new_zero_width_nonzero_height() {
+        let c = PixelCanvas::new(0, 10);
+        assert_eq!(c.data.len(), 0);
+        assert_eq!(c.width, 0);
+        assert_eq!(c.height, 10);
+    }
+
+    #[test]
+    fn new_nonzero_width_zero_height() {
+        let c = PixelCanvas::new(10, 0);
+        assert_eq!(c.data.len(), 0);
+        assert_eq!(c.width, 10);
+        assert_eq!(c.height, 0);
+    }
+
+    #[test]
+    fn get_pixel_out_of_bounds_returns_transparent() {
+        let c = PixelCanvas::new(5, 5);
+        assert_eq!(c.get_pixel(10, 10), [0, 0, 0, 0]);
+        assert_eq!(c.get_pixel(5, 0), [0, 0, 0, 0]); // exactly at width boundary
+    }
+
+    #[test]
+    fn set_pixel_out_of_bounds_is_noop() {
+        let mut c = PixelCanvas::new(5, 5);
+        c.set_pixel(10, 10, [255, 0, 0, 255]);
+        assert!(c.data.iter().all(|&b| b == 0));
+    }
 }

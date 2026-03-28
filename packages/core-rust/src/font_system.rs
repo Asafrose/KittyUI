@@ -302,4 +302,121 @@ mod tests {
             "line height ({h}) should be at least font_size (16.0)"
         );
     }
+
+    // -- measure_text with bold=true -----------------------------------------
+
+    #[test]
+    fn measure_text_bold_returns_nonzero() {
+        let mut fs = FontSystem::new();
+        let (w, h) = fs.measure_text("Hello", 16.0, true, false);
+        assert!(w > 0.0, "bold width should be > 0, got {w}");
+        assert!(h > 0.0, "bold height should be > 0, got {h}");
+    }
+
+    // -- measure_text with italic=true ---------------------------------------
+
+    #[test]
+    fn measure_text_italic_returns_nonzero() {
+        let mut fs = FontSystem::new();
+        let (w, h) = fs.measure_text("Hello", 16.0, false, true);
+        assert!(w > 0.0, "italic width should be > 0, got {w}");
+        assert!(h > 0.0, "italic height should be > 0, got {h}");
+    }
+
+    // -- rasterize_text with bold=true ---------------------------------------
+
+    #[test]
+    fn rasterize_text_bold_produces_glyphs() {
+        let mut fs = FontSystem::new();
+        let glyphs = fs.rasterize_text("A", 16.0, true, false);
+        assert!(
+            !glyphs.is_empty(),
+            "bold rasterize should produce at least 1 glyph"
+        );
+        let g = &glyphs[0];
+        assert!(!g.data.is_empty(), "bold glyph data should not be empty");
+        assert_eq!(g.content, GlyphContent::Mask, "should be a mask glyph");
+    }
+
+    // -- rasterize_text with special characters ------------------------------
+
+    #[test]
+    fn rasterize_text_digits_and_punctuation() {
+        let mut fs = FontSystem::new();
+        let glyphs = fs.rasterize_text("123!@#", 16.0, false, false);
+        assert!(
+            !glyphs.is_empty(),
+            "digits and punctuation should produce glyphs"
+        );
+        // Each visible character should produce a glyph
+        assert!(
+            glyphs.len() >= 3,
+            "should have at least 3 glyphs for '123!@#', got {}",
+            glyphs.len()
+        );
+    }
+
+    // -- font fallback (sans → mono) -----------------------------------------
+
+    #[test]
+    fn pick_font_falls_back_to_mono() {
+        // We can't easily remove sans fonts at runtime, but we can verify
+        // that pick_font returns Some for both bold and non-bold on this
+        // system (it should always find at least one font).
+        let fs = FontSystem::new();
+        let regular = fs.pick_font(false);
+        assert!(
+            regular.is_some(),
+            "pick_font(false) should find at least one font"
+        );
+        let bold = fs.pick_font(true);
+        assert!(
+            bold.is_some(),
+            "pick_font(true) should find at least one font (with fallback)"
+        );
+    }
+
+    // -- rasterize_text empty string -----------------------------------------
+
+    #[test]
+    fn rasterize_text_empty_string_returns_empty() {
+        let mut fs = FontSystem::new();
+        let glyphs = fs.rasterize_text("", 16.0, false, false);
+        assert!(glyphs.is_empty(), "empty string should produce no glyphs");
+    }
+
+    // -- measure_text scales with font size ----------------------------------
+
+    #[test]
+    fn measure_text_larger_font_wider() {
+        let mut fs = FontSystem::new();
+        let (w_small, _) = fs.measure_text("Hello", 12.0, false, false);
+        let (w_large, _) = fs.measure_text("Hello", 24.0, false, false);
+        assert!(
+            w_large > w_small,
+            "larger font ({w_large}) should be wider than smaller ({w_small})"
+        );
+    }
+
+    // -- rasterize_text glyph positions are tightened -----------------------
+
+    #[test]
+    fn rasterize_text_glyphs_start_near_zero_y() {
+        let mut fs = FontSystem::new();
+        let glyphs = fs.rasterize_text("Ag", 24.0, false, false);
+        assert!(!glyphs.is_empty());
+        let min_y = glyphs.iter().map(|g| g.y).fold(f32::MAX, f32::min);
+        // After tightening, the minimum y should be 0 or very close
+        assert!(
+            min_y <= 1.0,
+            "after tightening, min_y should be near 0, got {min_y}"
+        );
+    }
+
+    // -- Default trait -------------------------------------------------------
+
+    #[test]
+    fn font_system_default_does_not_panic() {
+        let _fs = FontSystem::default();
+    }
 }
