@@ -238,6 +238,8 @@ struct EngineState {
     gradient_images: Vec<GradientImage>,
     /// Next auto-incremented image id for gradient transmissions.
     next_gradient_image_id: u32,
+    /// Shadow images pending output (collected during paint, flushed in render).
+    shadow_images_pending: Vec<ShadowImage>,
 }
 
 /// A gradient rendered to pixel data, ready for Kitty protocol output.
@@ -284,6 +286,7 @@ impl EngineState {
             pixel_output: Vec::new(),
             gradient_images: Vec::new(),
             next_gradient_image_id: 50000,
+            shadow_images_pending: Vec::new(),
         }
     }
 
@@ -1678,7 +1681,7 @@ fn paint_node(
                 if let Ok(transmit_bytes) = crate::image::encode_transmit(&img_data, image_id) {
                     // Move cursor to the node position and transmit + display the image.
                     let cursor_move = format!("\x1b[{};{}H", y0 + 1, x0 + 1);
-                    let display_bytes = crate::image::encode_display(image_id, None);
+                    let display_bytes = crate::image::encode_display_z(image_id, None, -1);
 
                     pixel_output.extend_from_slice(cursor_move.as_bytes());
                     pixel_output.extend_from_slice(&transmit_bytes);
@@ -1981,25 +1984,67 @@ pub extern "C" fn render_frame() {
                 std::mem::swap(state.double_buf.back_mut(), &mut back_buf);
                 state.pixel_output = pixel_buf;
 
-                // Output shadow images via Kitty protocol before cell output.
-                for shadow in &shadow_images {
-                    let img_id = crate::image::ImageCache::next_id();
-                    if let Ok(transmit_data) = crate::image::encode_transmit(&shadow.data, img_id) {
-                        // Transmit the image data
+                // Collect shadow images for output later (after delete).
+                state.shadow_images_pending = shadow_images;
+            }
+
+            // --- Output pipeline ---
+            // Step 1: Delete ALL previous Kitty images (prevents ghosting on resize).
+            let has_shadows = !state.shadow_images_pending.is_empty();
+            let has_pixels = !state.pixel_output.is_empty();
+            let has_grads = !state.gradient_images.is_empty();
+            if has_shadows || has_pixels || has_grads {
+                let delete_cmd = crate::image::encode_delete(crate::image::DeleteTarget::All);
+                state.write_output(&delete_cmd);
+            }
+
+            // Step 2: Output shadow images (z=-2, behind everything).
+            let shadows = std::mem::take(&mut state.shadow_images_pending);
+            for shadow in &shadows {
+                let img_id = crate::image::ImageCache::next_id();
+                if let Ok(transmit_data) = crate::image::encode_transmit(&shadow.data, img_id) {
+                    state.write_output(&transmit_data);
+                    let move_cursor = format!("\x1b[{};{}H", shadow.row + 1, shadow.col + 1);
+                    state.write_output(move_cursor.as_bytes());
+                    let display_cmd = crate::image::encode_display_z(img_id, None, -2);
+                    state.write_output(&display_cmd);
+                }
+            }
+            drop(shadows);
+
+            // Step 3: Output pixel images — border-radius backgrounds (z=-1).
+            if !state.pixel_output.is_empty() {
+                let pixel_data = std::mem::take(&mut state.pixel_output);
+                state.write_output(&pixel_data);
+            }
+
+            // Step 4: Output gradient images (z=-1).
+            let grad_images = std::mem::take(&mut state.gradient_images);
+            for grad_img in &grad_images {
+                if let Ok(img_data) = grad_img.canvas.to_image_data() {
+                    if let Ok(transmit_data) = image::encode_transmit(&img_data, grad_img.image_id)
+                    {
                         state.write_output(&transmit_data);
-                        // Position cursor and display at shadow location
-                        let move_cursor = format!("\x1b[{};{}H", shadow.row + 1, shadow.col + 1);
-                        state.write_output(move_cursor.as_bytes());
-                        let display_cmd = crate::image::encode_display(img_id, None);
-                        state.write_output(&display_cmd);
+                        let cursor_move =
+                            format!("\x1b[{};{}H", grad_img.row + 1, grad_img.col + 1);
+                        state.write_output(cursor_move.as_bytes());
+                        let display = image::encode_display_z(grad_img.image_id, None, -1);
+                        state.write_output(&display);
                     }
                 }
             }
+            drop(grad_images);
 
-            // Output: use full_render for test mode (captured output),
-            // diff for real terminal rendering.
+            // Step 5: Output cell content (text on top, z=0).
+            // When pixel rendering is active, use full_render instead of diff
+            // to prevent ghosting artifacts from partial updates.
             let is_test_mode = state.output.is_some();
-            if is_test_mode {
+            let use_full_render = is_test_mode || has_shadows || has_pixels || has_grads;
+            if use_full_render {
+                // Clear screen first, then render all cells.
+                if !is_test_mode {
+                    state.write_output(b"\x1b[2J");
+                }
                 let rendered = state.double_buf.full_render();
                 if !rendered.is_empty() {
                     state.write_output(&rendered);
@@ -2010,39 +2055,6 @@ pub extern "C" fn render_frame() {
                     state.write_output(&diff);
                 }
             }
-
-            // Flush pixel-rendered graphics (border-radius, gradients, etc.).
-            // Delete all previously transmitted images first to prevent
-            // memory leaks in the terminal — each frame re-transmits
-            // the images it needs.
-            let has_pixel = !state.pixel_output.is_empty();
-            let has_gradient = !state.gradient_images.is_empty();
-            if has_pixel || has_gradient {
-                let delete_cmd = crate::image::encode_delete(crate::image::DeleteTarget::All);
-                state.write_output(&delete_cmd);
-            }
-            if has_pixel {
-                let pixel_data = std::mem::take(&mut state.pixel_output);
-                state.write_output(&pixel_data);
-            }
-
-            // Emit gradient images via Kitty graphics protocol.
-            let grad_images = std::mem::take(&mut state.gradient_images);
-            for grad_img in &grad_images {
-                if let Ok(img_data) = grad_img.canvas.to_image_data() {
-                    if let Ok(transmit_data) = image::encode_transmit(&img_data, grad_img.image_id)
-                    {
-                        state.write_output(&transmit_data);
-                        // Move cursor to placement position and display the image.
-                        let cursor_move =
-                            format!("\x1b[{};{}H", grad_img.row + 1, grad_img.col + 1);
-                        state.write_output(cursor_move.as_bytes());
-                        let display = image::encode_display(grad_img.image_id, None);
-                        state.write_output(&display);
-                    }
-                }
-            }
-            drop(grad_images);
 
             // Swap buffers.
             state.double_buf.swap_no_clear();
