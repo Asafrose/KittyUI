@@ -57,6 +57,11 @@ pub fn detect_from_env() -> TerminalCaps {
         caps.kitty_graphics = true;
     }
 
+    // KITTY_PID is set by Kitty even inside tmux/screen sessions
+    if std::env::var("KITTY_PID").is_ok() {
+        caps.kitty_graphics = true;
+    }
+
     caps
 }
 
@@ -120,6 +125,21 @@ pub fn detect() -> TerminalCaps {
     caps
 }
 
+/// Probe for Kitty graphics support by sending a test transmission.
+/// This is the most reliable detection method.
+/// Returns true if the terminal responds with a Kitty graphics OK response.
+///
+/// Sends: `\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\`
+/// Expected response: `\x1b_Gi=31;OK\x1b\\`
+///
+/// NOTE: This requires reading from stdin in raw mode, so it can only be done
+/// during init when we have access to raw mode. For now, rely on env var
+/// detection — this function is a no-op placeholder for future implementation.
+#[must_use]
+pub fn probe_kitty_graphics() -> bool {
+    false
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -175,6 +195,24 @@ mod tests {
             Some(v) => std::env::set_var("KITTY_WINDOW_ID", v),
             None => std::env::remove_var("KITTY_WINDOW_ID"),
         }
+    }
+
+    #[test]
+    fn detect_from_env_respects_kitty_pid() {
+        let prev = std::env::var("KITTY_PID").ok();
+        std::env::set_var("KITTY_PID", "12345");
+        let caps = detect_from_env();
+        assert!(caps.kitty_graphics);
+        match prev {
+            Some(v) => std::env::set_var("KITTY_PID", v),
+            None => std::env::remove_var("KITTY_PID"),
+        }
+    }
+
+    #[test]
+    fn probe_kitty_graphics_returns_false() {
+        // Stub always returns false for now
+        assert!(!probe_kitty_graphics());
     }
 
     #[test]
