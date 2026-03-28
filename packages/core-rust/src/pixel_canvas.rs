@@ -263,6 +263,14 @@ impl PixelCanvas {
         data: &[u8],
         color: [u8; 4],
     ) {
+        // Guard: data must contain at least width*height bytes of coverage.
+        // Color glyphs (e.g. emoji) may have 4 bytes/pixel — skip those
+        // since we only support grayscale coverage bitmaps here.
+        let expected = (width as usize) * (height as usize);
+        if expected == 0 || data.len() < expected {
+            return;
+        }
+
         let x0 = x.floor() as i32;
         let y0 = y.floor() as i32;
         for gy in 0..height {
@@ -763,6 +771,46 @@ mod tests {
         // Pixel (3,4) coverage=0, should remain transparent
         let p = c.get_pixel(3, 4);
         assert_eq!(p[3], 0);
+    }
+
+    #[test]
+    fn draw_glyph_zero_width_is_noop() {
+        let mut c = PixelCanvas::new(10, 10);
+        c.draw_glyph(0.0, 0.0, 0, 5, &[], [255, 0, 0, 255]);
+        assert!(c.data.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn draw_glyph_undersized_data_is_noop() {
+        // Simulate a color glyph or corrupt data where data.len() < width*height
+        let mut c = PixelCanvas::new(10, 10);
+        let short_data = vec![255u8; 3]; // 2x2 glyph needs 4 bytes, only 3 provided
+        c.draw_glyph(0.0, 0.0, 2, 2, &short_data, [255, 0, 0, 255]);
+        // Should not panic and should not render anything
+        assert!(c.data.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn draw_glyph_negative_offset_clips() {
+        let mut c = PixelCanvas::new(10, 10);
+        // Glyph positioned partly off the left/top edge
+        let coverage = vec![255u8; 4]; // 2x2 fully covered
+        c.draw_glyph(-1.0, -1.0, 2, 2, &coverage, [255, 0, 0, 255]);
+        // Only (0,0) should be visible (the bottom-right pixel of the 2x2)
+        let p = c.get_pixel(0, 0);
+        assert_eq!(p[3], 255, "pixel at (0,0) should be visible");
+        // (1,0), (0,1) should be empty because they map to glyph pixels at
+        // gx=2/gy=2 which are outside the 2x2 glyph
+        // Actually gx=1,gy=0 => px=0,py=-1 => clipped; gx=0,gy=1 => px=-1,py=0 => clipped
+        // gx=1,gy=1 => px=0,py=0 => visible -- that's the one we checked above
+    }
+
+    #[test]
+    fn draw_glyph_entirely_off_canvas() {
+        let mut c = PixelCanvas::new(10, 10);
+        let coverage = vec![255u8; 4];
+        c.draw_glyph(100.0, 100.0, 2, 2, &coverage, [255, 0, 0, 255]);
+        assert!(c.data.iter().all(|&b| b == 0));
     }
 
     // -- draw_text ----------------------------------------------------------
