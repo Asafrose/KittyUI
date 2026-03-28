@@ -64,6 +64,8 @@ pub struct PixelNodeStyle {
     pub underline: bool,
     /// Strikethrough decoration.
     pub strikethrough: bool,
+    /// Dim text (rendered at lower alpha).
+    pub dim: bool,
     /// Border radius in pixels for rounded corners.
     pub border_radius: f32,
     /// Whether overflow is hidden (enables clipping).
@@ -95,6 +97,17 @@ pub struct PixelGradient {
     pub stops: Vec<(f32, [u8; 4])>,
 }
 
+/// Per-character color override within text content.
+#[derive(Clone, Debug)]
+pub struct PixelTextSpan {
+    /// Start byte offset in the text string.
+    pub start: u16,
+    /// End byte offset (exclusive) in the text string.
+    pub end: u16,
+    /// Foreground color for this span.
+    pub fg: [u8; 4],
+}
+
 /// Trait for providing the layout tree data to the pixel renderer.
 ///
 /// This decouples the renderer from `EngineState` so integration (#131) can
@@ -111,6 +124,12 @@ pub trait PaintTree {
 
     /// Return the text content for a node, or `None` if the node has no text.
     fn text_content(&self, node_id: u32) -> Option<&str>;
+
+    /// Return per-character color spans for a node's text.  Default returns
+    /// empty (single-color text).
+    fn text_spans(&self, _node_id: u32) -> Vec<PixelTextSpan> {
+        Vec::new()
+    }
 
     /// Return the child node IDs for a node (in order).
     fn children(&self, node_id: u32) -> Vec<u32>;
@@ -190,6 +209,7 @@ impl PixelRenderer {
     }
 
     /// Recursively paint a node and its children.
+    #[allow(clippy::too_many_lines)]
     fn paint_node(
         &mut self,
         tree: &dyn PaintTree,
@@ -230,14 +250,26 @@ impl PixelRenderer {
 
             // 2. Background (gradient or solid).
             if let Some(ref gradient) = style.gradient {
-                self.canvas.fill_linear_gradient(
-                    px_x,
-                    px_y,
-                    px_w,
-                    px_h,
-                    gradient.angle_deg,
-                    &gradient.stops,
-                );
+                if border_radius > 0.0 {
+                    self.canvas.fill_linear_gradient_rounded(
+                        px_x,
+                        px_y,
+                        px_w,
+                        px_h,
+                        gradient.angle_deg,
+                        &gradient.stops,
+                        border_radius,
+                    );
+                } else {
+                    self.canvas.fill_linear_gradient(
+                        px_x,
+                        px_y,
+                        px_w,
+                        px_h,
+                        gradient.angle_deg,
+                        &gradient.stops,
+                    );
+                }
             } else if let Some(ref bg) = style.bg {
                 let rgba = color_to_rgba(bg, 255);
                 if border_radius > 0.0 {
@@ -267,22 +299,88 @@ impl PixelRenderer {
 
             // 4. Text.
             if let Some(text) = tree.text_content(node_id) {
+                let alpha = if style.dim { 140 } else { 255 };
                 let fg = style
                     .fg
                     .as_ref()
-                    .map_or([255, 255, 255, 255], |c| color_to_rgba(c, 255));
+                    .map_or([255, 255, 255, alpha], |c| color_to_rgba(c, alpha));
                 let font_size = self.cell_h as f32;
 
-                self.canvas.draw_text(
-                    px_x,
-                    px_y,
-                    text,
-                    fg,
-                    font_size,
-                    style.bold,
-                    style.italic,
-                    &mut self.font_system,
-                );
+                let spans = tree.text_spans(node_id);
+                if spans.is_empty() {
+                    // Single-color fast path.
+                    self.canvas.draw_text(
+                        px_x,
+                        px_y,
+                        text,
+                        fg,
+                        font_size,
+                        style.bold,
+                        style.italic,
+                        &mut self.font_system,
+                    );
+                } else {
+                    // Multi-color text: render each segment separately.
+                    // First, measure character advance positions to place
+                    // each segment correctly.  We render the full text for
+                    // shaping, then re-render per-span with the right color.
+                    // This is an approximation -- full segment rendering
+                    // would require tracking glyph byte-offset mapping, but
+                    // for monospace text this is correct.
+                    let char_w = font_size * 0.6; // monospace approximate
+                    let mut covered = vec![false; text.len()];
+                    for span in &spans {
+                        let start = (span.start as usize).min(text.len());
+                        let end = (span.end as usize).min(text.len());
+                        if start >= end {
+                            continue;
+                        }
+                        let segment = &text[start..end];
+                        let char_offset: usize = text[..start].chars().count();
+                        let seg_x = px_x + char_offset as f32 * char_w;
+                        let mut span_fg = span.fg;
+                        span_fg[3] = ((span_fg[3] as u32 * alpha as u32) / 255) as u8;
+                        self.canvas.draw_text(
+                            seg_x,
+                            px_y,
+                            segment,
+                            span_fg,
+                            font_size,
+                            style.bold,
+                            style.italic,
+                            &mut self.font_system,
+                        );
+                        for i in start..end {
+                            covered[i] = true;
+                        }
+                    }
+                    // Render uncovered portions with default fg.
+                    let mut i = 0;
+                    let bytes = text.as_bytes();
+                    while i < bytes.len() {
+                        if covered[i] {
+                            i += 1;
+                        } else {
+                            let start = i;
+                            while i < bytes.len() && !covered[i] {
+                                i += 1;
+                            }
+                            let segment = &text[start..i];
+                            let char_offset: usize = text[..start].chars().count();
+                            let seg_x = px_x + char_offset as f32 * char_w;
+                            self.canvas.draw_text(
+                                seg_x,
+                                px_y,
+                                segment,
+                                fg,
+                                font_size,
+                                style.bold,
+                                style.italic,
+                                &mut self.font_system,
+                            );
+                        }
+                    }
+                }
 
                 // Text decorations.
                 if style.underline {
@@ -325,12 +423,20 @@ impl PixelRenderer {
     ) {
         let blur = shadow.blur_radius;
         let spread = shadow.spread_radius;
-        let expand = (blur + spread.abs()).ceil();
 
-        let sx = x + shadow.offset_x - expand;
-        let sy = y + shadow.offset_y - expand;
-        let sw = w + expand * 2.0 + spread * 2.0;
-        let sh = h + expand * 2.0 + spread * 2.0;
+        // The shadow shape is the node rect expanded by `spread` on each side.
+        let inner_w = (w + spread * 2.0).max(0.0);
+        let inner_h = (h + spread * 2.0).max(0.0);
+        // The blur needs `blur` pixels of padding around the shape.
+        let pad = blur.ceil();
+        let sw = inner_w + pad * 2.0;
+        let sh = inner_h + pad * 2.0;
+
+        // Shadow canvas origin in main-canvas coordinates: the shape center
+        // is at (x + w/2 + offset_x, y + h/2 + offset_y), so the shadow
+        // canvas top-left is offset by half-canvas from that center.
+        let sx = x + shadow.offset_x - spread - pad;
+        let sy = y + shadow.offset_y - spread - pad;
 
         let sw_u = sw.ceil() as u32;
         let sh_u = sh.ceil() as u32;
@@ -339,10 +445,8 @@ impl PixelRenderer {
         }
 
         let mut shadow_canvas = PixelCanvas::new(sw_u, sh_u);
-        let inner_x = expand;
-        let inner_y = expand;
-        let inner_w = w + spread * 2.0;
-        let inner_h = h + spread * 2.0;
+        let inner_x = pad;
+        let inner_y = pad;
 
         if radius > 0.0 {
             shadow_canvas.fill_rounded_rect(
@@ -413,7 +517,32 @@ fn color_to_rgba(color: &Color, alpha: u8) -> [u8; 4] {
         // Approximate standard ANSI colors.
         Color::Ansi(idx) => ansi_index_to_rgb(*idx, alpha),
         Color::AnsiBright(idx) => ansi_bright_index_to_rgb(*idx, alpha),
-        Color::Palette(_) => [128, 128, 128, alpha],
+        Color::Palette(idx) => palette_index_to_rgb(*idx, alpha),
+    }
+}
+
+/// Map a 256-color palette index to RGB.
+///
+/// - 0-7: standard ANSI colors
+/// - 8-15: bright ANSI colors
+/// - 16-231: 6x6x6 color cube
+/// - 232-255: 24-step grayscale ramp
+fn palette_index_to_rgb(idx: u8, alpha: u8) -> [u8; 4] {
+    match idx {
+        0..=7 => ansi_index_to_rgb(idx, alpha),
+        8..=15 => ansi_bright_index_to_rgb(idx - 8, alpha),
+        16..=231 => {
+            let n = idx - 16;
+            let b = n % 6;
+            let g = (n / 6) % 6;
+            let r = n / 36;
+            let to_rgb = |v: u8| if v == 0 { 0 } else { 55 + 40 * v };
+            [to_rgb(r), to_rgb(g), to_rgb(b), alpha]
+        }
+        232..=255 => {
+            let v = 8 + 10 * (idx - 232);
+            [v, v, v, alpha]
+        }
     }
 }
 
