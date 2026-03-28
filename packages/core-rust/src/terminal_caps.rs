@@ -57,6 +57,11 @@ pub fn detect_from_env() -> TerminalCaps {
         caps.kitty_graphics = true;
     }
 
+    // Check for KITTY_PID (set by Kitty even in tmux)
+    if std::env::var("KITTY_PID").is_ok() {
+        caps.kitty_graphics = true;
+    }
+
     caps
 }
 
