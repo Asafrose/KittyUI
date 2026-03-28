@@ -47,20 +47,21 @@ def drain_output(master_fd, timeout=0.1):
         if not ready:
             break
         try:
-            data = os.read(master_fd, 4096)
+            data = os.read(master_fd, 65536)
             if not data:
                 break
         except OSError:
             break
 
 
-def wait_for_screenshot(path, timeout=15):
-    """Wait until a screenshot file exists and has nonzero size."""
+def wait_for_screenshot(path, master_fd, timeout=15):
+    """Wait until a screenshot file exists, continuously draining PTY output."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         if os.path.exists(path) and os.path.getsize(path) > 0:
             return True
-        time.sleep(0.5)
+        # Keep draining PTY output to prevent buffer deadlock
+        drain_output(master_fd, timeout=0.2)
     return False
 
 
@@ -101,6 +102,7 @@ def main():
         os.environ["TERM_PROGRAM"] = "kitty"
         os.environ["KITTY_WINDOW_ID"] = "1"
         os.environ["COLORTERM"] = "truecolor"
+        os.environ["KITTYUI_SCREENSHOT"] = os.path.join(SCREENSHOT_DIR, "latest.png")
 
         os.execvp(
             "bun",
@@ -108,7 +110,6 @@ def main():
                 "bun",
                 "run",
                 "examples/dashboard/src/main.tsx",
-                "--pixel",
                 "--screenshot-dir",
                 SCREENSHOT_DIR,
             ],
@@ -123,12 +124,18 @@ def main():
     print(f"[visual-test] Pixel dimensions: {XPIXEL}x{YPIXEL}")
     print(f"[visual-test] Waiting for initial render...")
 
-    # Drain child output in the background to prevent the PTY buffer from
-    # filling up and blocking the child process.
-    drain_output(master_fd, timeout=0.5)
+    # Drain child output continuously in a background thread to prevent
+    # PTY buffer deadlock (pixel renderer outputs large Kitty images).
+    import threading
+    drain_stop = threading.Event()
+    def drain_thread():
+        while not drain_stop.is_set():
+            drain_output(master_fd, timeout=0.1)
+    drainer = threading.Thread(target=drain_thread, daemon=True)
+    drainer.start()
 
     # Wait for the first screenshot to appear
-    if not wait_for_screenshot(screenshot_path, timeout=20):
+    if not wait_for_screenshot(screenshot_path, master_fd, timeout=20):
         print("[visual-test] ERROR: No screenshot produced within 20 seconds.", file=sys.stderr)
         os.kill(pid, signal.SIGTERM)
         os.waitpid(pid, 0)
