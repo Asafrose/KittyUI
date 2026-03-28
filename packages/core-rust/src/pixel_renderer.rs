@@ -156,6 +156,8 @@ pub struct PixelRenderer {
     rows: u32,
     /// Kitty image ID for the current frame.
     image_id: u32,
+    /// Hash of previous frame's pixel data (for skip-if-unchanged).
+    prev_frame_hash: u64,
 }
 
 impl PixelRenderer {
@@ -171,6 +173,7 @@ impl PixelRenderer {
             cols,
             rows,
             image_id: 0,
+            prev_frame_hash: 0,
         }
     }
 
@@ -204,8 +207,32 @@ impl PixelRenderer {
             self.paint_node(tree, root_id, 0.0, 0.0, None);
         }
 
+        // Quick hash of pixel data to skip encoding if unchanged.
+        let hash = Self::hash_canvas(&self.canvas);
+        if hash == self.prev_frame_hash && self.image_id > 0 {
+            // Frame unchanged — skip re-encoding.
+            return Vec::new();
+        }
+        self.prev_frame_hash = hash;
+
         // Encode as Kitty image.
         self.encode_frame()
+    }
+
+    /// Fast hash of canvas pixel data for dirty detection.
+    fn hash_canvas(canvas: &PixelCanvas) -> u64 {
+        // FNV-1a inspired simple hash — fast enough for frame comparison.
+        let mut h: u64 = 0xcbf29ce484222325;
+        // Sample every 64th byte for speed (full hash of 5MB would be slow).
+        let data = &canvas.data;
+        let step = (data.len() / 4096).max(1);
+        let mut i = 0;
+        while i < data.len() {
+            h ^= data[i] as u64;
+            h = h.wrapping_mul(0x100000001b3);
+            i += step;
+        }
+        h
     }
 
     /// Recursively paint a node and its children.
