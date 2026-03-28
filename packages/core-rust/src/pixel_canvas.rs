@@ -22,7 +22,7 @@
 
 use std::io;
 
-use crate::font_system::FontSystem;
+use crate::font_system::{FontSystem, GlyphContent};
 use crate::image::ImageData;
 
 // ---------------------------------------------------------------------------
@@ -250,10 +250,60 @@ impl PixelCanvas {
         }
     }
 
+    /// Fill a linear gradient across a rounded rect.
+    ///
+    /// Like [`fill_linear_gradient`](Self::fill_linear_gradient) but clips to a
+    /// rounded rectangle using the SDF for anti-aliased corners.
+    pub fn fill_linear_gradient_rounded(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        angle_deg: f32,
+        stops: &[(f32, [u8; 4])],
+        radius: f32,
+    ) {
+        if stops.is_empty() {
+            return;
+        }
+        if stops.len() == 1 {
+            self.fill_rounded_rect(x, y, w, h, radius, stops[0].1);
+            return;
+        }
+
+        let r = radius.min(w / 2.0).min(h / 2.0);
+        let angle = angle_deg.to_radians();
+        let cos_a = angle.cos();
+        let sin_a = angle.sin();
+
+        let x0 = x.max(0.0) as u32;
+        let y0 = y.max(0.0) as u32;
+        let x1 = ((x + w).ceil() as u32).min(self.width);
+        let y1 = ((y + h).ceil() as u32).min(self.height);
+
+        for py in y0..y1 {
+            for px in x0..x1 {
+                let fx = px as f32 + 0.5;
+                let fy = py as f32 + 0.5;
+                let d = sdf_rounded_rect(fx - x, fy - y, w, h, r);
+                let shape_alpha = (0.5 - d).clamp(0.0, 1.0);
+                if shape_alpha > 0.0 {
+                    let gx = (fx - x) / w;
+                    let gy = (fy - y) / h;
+                    let t = (gx * cos_a + gy * sin_a).clamp(0.0, 1.0);
+                    let mut color = interpolate_stops(t, stops);
+                    color[3] = (color[3] as f32 * shape_alpha) as u8;
+                    self.blend_pixel(px, py, color);
+                }
+            }
+        }
+    }
+
     /// Draw a rasterized glyph onto the canvas.
     ///
-    /// The glyph data is a coverage bitmap (1 byte per pixel, 0=transparent,
-    /// 255=fully covered).  The color is applied using the coverage as alpha.
+    /// Supports both alpha-mask glyphs (1 byte per pixel coverage) and color
+    /// glyphs (4 bytes per pixel RGBA, e.g. color emoji).
     pub fn draw_glyph(
         &mut self,
         x: f32,
@@ -262,6 +312,7 @@ impl PixelCanvas {
         height: u32,
         data: &[u8],
         color: [u8; 4],
+        content: GlyphContent,
     ) {
         let x0 = x.floor() as i32;
         let y0 = y.floor() as i32;
@@ -270,14 +321,27 @@ impl PixelCanvas {
                 let px = x0 + gx as i32;
                 let py = y0 + gy as i32;
                 if px >= 0 && py >= 0 && (px as u32) < self.width && (py as u32) < self.height {
-                    let coverage = data[(gy * width + gx) as usize];
-                    if coverage > 0 {
-                        let alpha = ((color[3] as u32 * coverage as u32) / 255) as u8;
-                        self.blend_pixel(
-                            px as u32,
-                            py as u32,
-                            [color[0], color[1], color[2], alpha],
-                        );
+                    match content {
+                        GlyphContent::Mask => {
+                            let coverage = data[(gy * width + gx) as usize];
+                            if coverage > 0 {
+                                let alpha = ((color[3] as u32 * coverage as u32) / 255) as u8;
+                                self.blend_pixel(
+                                    px as u32,
+                                    py as u32,
+                                    [color[0], color[1], color[2], alpha],
+                                );
+                            }
+                        }
+                        GlyphContent::Color => {
+                            let idx = ((gy * width + gx) * 4) as usize;
+                            if idx + 3 < data.len() {
+                                let rgba = [data[idx], data[idx + 1], data[idx + 2], data[idx + 3]];
+                                if rgba[3] > 0 {
+                                    self.blend_pixel(px as u32, py as u32, rgba);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -305,6 +369,7 @@ impl PixelCanvas {
                 glyph.height,
                 &glyph.data,
                 color,
+                glyph.content,
             );
         }
     }
@@ -745,7 +810,15 @@ mod tests {
         let mut c = PixelCanvas::new(10, 10);
         // 2x2 glyph: top-left fully covered, bottom-right half covered
         let coverage = vec![255, 128, 64, 0];
-        c.draw_glyph(2.0, 3.0, 2, 2, &coverage, [255, 0, 0, 255]);
+        c.draw_glyph(
+            2.0,
+            3.0,
+            2,
+            2,
+            &coverage,
+            [255, 0, 0, 255],
+            GlyphContent::Mask,
+        );
 
         // Pixel (2,3) should be fully red
         let p = c.get_pixel(2, 3);
