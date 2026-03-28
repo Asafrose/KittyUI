@@ -12,9 +12,8 @@ import {
   KEY_RIGHT,
   Box,
   Text,
-  type KittyKeyboardEvent,
 } from "@kittyui/react";
-import type { CSSStyle } from "@kittyui/core";
+import type { CSSStyle, KeyboardEvent as KittyKeyboardEvent } from "@kittyui/core";
 
 // ---------------------------------------------------------------------------
 // Design tokens (shadcn zinc dark -- exact palette)
@@ -325,7 +324,7 @@ export function App() {
   // Keyboard navigation: left/right arrows switch tabs
   useKeyboard(
     (event: KittyKeyboardEvent) => {
-      const keyCode = event.keyCode;
+      const keyCode = (event as unknown as { keyCode: number }).keyCode;
       const tabIndex = TABS.indexOf(activeTab);
       if (keyCode === KEY_LEFT) {
         const next = tabIndex > 0 ? tabIndex - 1 : TABS.length - 1;
