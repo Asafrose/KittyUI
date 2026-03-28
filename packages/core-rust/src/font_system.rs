@@ -169,6 +169,19 @@ impl FontSystem {
             x += metrics.advance_width;
         }
 
+        // Tighten glyph positioning: shift all glyphs up to remove the gap
+        // between the font's typographic ascent and the actual top of the
+        // tallest glyph.  Without this, text sits too low in its container
+        // (e.g. avatar initials at the bottom of circles instead of centred).
+        if !glyphs.is_empty() {
+            let min_y = glyphs.iter().map(|g| g.y).fold(f32::MAX, f32::min);
+            if min_y > 0.0 {
+                for g in &mut glyphs {
+                    g.y -= min_y;
+                }
+            }
+        }
+
         glyphs
     }
 }

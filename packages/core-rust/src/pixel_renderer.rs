@@ -330,12 +330,17 @@ impl PixelRenderer {
                     .map_or([255, 255, 255, alpha], |c| color_to_rgba(c, alpha));
                 let font_size = style.font_size.unwrap_or(self.cell_h as f32);
 
+                // Vertically centre text within the node's pixel height.
+                let text_height = font_size;
+                let vertical_offset = (px_h - text_height).max(0.0) / 2.0;
+                let text_y = px_y + vertical_offset;
+
                 let spans = tree.text_spans(node_id);
                 if spans.is_empty() {
                     // Single-color fast path.
                     self.canvas.draw_text(
                         px_x,
-                        px_y,
+                        text_y,
                         text,
                         fg,
                         font_size,
@@ -366,7 +371,7 @@ impl PixelRenderer {
                         span_fg[3] = ((span_fg[3] as u32 * alpha as u32) / 255) as u8;
                         self.canvas.draw_text(
                             seg_x,
-                            px_y,
+                            text_y,
                             segment,
                             span_fg,
                             font_size,
@@ -394,7 +399,7 @@ impl PixelRenderer {
                             let seg_x = px_x + char_offset as f32 * char_w;
                             self.canvas.draw_text(
                                 seg_x,
-                                px_y,
+                                text_y,
                                 segment,
                                 fg,
                                 font_size,
@@ -408,12 +413,12 @@ impl PixelRenderer {
 
                 // Text decorations.
                 if style.underline {
-                    let line_y = px_y + font_size * 0.9;
+                    let line_y = text_y + font_size * 0.9;
                     self.canvas
                         .draw_line(px_x, line_y, px_x + px_w, line_y, 1.0, fg);
                 }
                 if style.strikethrough {
-                    let line_y = px_y + font_size * 0.5;
+                    let line_y = text_y + font_size * 0.5;
                     self.canvas
                         .draw_line(px_x, line_y, px_x + px_w, line_y, 1.0, fg);
                 }
