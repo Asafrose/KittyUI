@@ -10,6 +10,7 @@ pub mod cell;
 pub mod cleanup;
 pub mod ffi_bridge;
 pub mod focus;
+pub mod font_system;
 pub mod hit_test;
 pub mod image;
 pub mod image_placement;
