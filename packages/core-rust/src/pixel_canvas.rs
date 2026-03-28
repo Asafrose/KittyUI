@@ -314,10 +314,13 @@ impl PixelCanvas {
         color: [u8; 4],
         content: GlyphContent,
     ) {
-        // Guard: data must contain at least width*height bytes of coverage.
-        // Color glyphs (e.g. emoji) may have 4 bytes/pixel — skip those
-        // since we only support grayscale coverage bitmaps here.
-        let expected = (width as usize) * (height as usize);
+        // Guard: data must contain the expected number of bytes for the
+        // content format.  Mask = 1 byte/pixel, Color = 4 bytes/pixel.
+        let pixels = (width as usize) * (height as usize);
+        let expected = match content {
+            GlyphContent::Mask => pixels,
+            GlyphContent::Color => pixels * 4,
+        };
         if expected == 0 || data.len() < expected {
             return;
         }
@@ -849,16 +852,24 @@ mod tests {
     #[test]
     fn draw_glyph_zero_width_is_noop() {
         let mut c = PixelCanvas::new(10, 10);
-        c.draw_glyph(0.0, 0.0, 0, 5, &[], [255, 0, 0, 255]);
+        c.draw_glyph(0.0, 0.0, 0, 5, &[], [255, 0, 0, 255], GlyphContent::Mask);
         assert!(c.data.iter().all(|&b| b == 0));
     }
 
     #[test]
     fn draw_glyph_undersized_data_is_noop() {
-        // Simulate a color glyph or corrupt data where data.len() < width*height
+        // Simulate corrupt data where data.len() < width*height
         let mut c = PixelCanvas::new(10, 10);
         let short_data = vec![255u8; 3]; // 2x2 glyph needs 4 bytes, only 3 provided
-        c.draw_glyph(0.0, 0.0, 2, 2, &short_data, [255, 0, 0, 255]);
+        c.draw_glyph(
+            0.0,
+            0.0,
+            2,
+            2,
+            &short_data,
+            [255, 0, 0, 255],
+            GlyphContent::Mask,
+        );
         // Should not panic and should not render anything
         assert!(c.data.iter().all(|&b| b == 0));
     }
@@ -868,7 +879,15 @@ mod tests {
         let mut c = PixelCanvas::new(10, 10);
         // Glyph positioned partly off the left/top edge
         let coverage = vec![255u8; 4]; // 2x2 fully covered
-        c.draw_glyph(-1.0, -1.0, 2, 2, &coverage, [255, 0, 0, 255]);
+        c.draw_glyph(
+            -1.0,
+            -1.0,
+            2,
+            2,
+            &coverage,
+            [255, 0, 0, 255],
+            GlyphContent::Mask,
+        );
         // Only (0,0) should be visible (the bottom-right pixel of the 2x2)
         let p = c.get_pixel(0, 0);
         assert_eq!(p[3], 255, "pixel at (0,0) should be visible");
@@ -882,7 +901,15 @@ mod tests {
     fn draw_glyph_entirely_off_canvas() {
         let mut c = PixelCanvas::new(10, 10);
         let coverage = vec![255u8; 4];
-        c.draw_glyph(100.0, 100.0, 2, 2, &coverage, [255, 0, 0, 255]);
+        c.draw_glyph(
+            100.0,
+            100.0,
+            2,
+            2,
+            &coverage,
+            [255, 0, 0, 255],
+            GlyphContent::Mask,
+        );
         assert!(c.data.iter().all(|&b| b == 0));
     }
 
