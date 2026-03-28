@@ -1089,4 +1089,757 @@ mod tests {
         assert!(p[1] > 0, "border pixel should have green, got g={}", p[1]);
         assert!(p[3] > 0, "border pixel should be visible");
     }
+
+    // -- paint_frame with gradient background --------------------------------
+
+    #[test]
+    fn paint_frame_with_gradient_background() {
+        let mut tree = TestTree::new();
+        tree.root = Some(1);
+        tree.layouts.insert(
+            1,
+            NodeLayout {
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 5.0,
+            },
+        );
+        tree.styles.insert(
+            1,
+            PixelNodeStyle {
+                gradient: Some(PixelGradient {
+                    angle_deg: 0.0, // left-to-right
+                    stops: vec![(0.0, [255, 0, 0, 255]), (1.0, [0, 0, 255, 255])],
+                }),
+                ..Default::default()
+            },
+        );
+        tree.children.insert(1, vec![]);
+
+        let mut r = PixelRenderer::new(10, 5, 8, 16);
+        let _output = r.paint_frame(&tree);
+
+        // Left side should be reddish, right side bluish
+        let left = r.canvas.get_pixel(4, 40);
+        let right = r.canvas.get_pixel(76, 40);
+        assert!(left[0] > left[2], "left should be more red than blue");
+        assert!(right[2] > right[0], "right should be more blue than red");
+    }
+
+    // -- paint_frame with gradient + borderRadius ----------------------------
+
+    #[test]
+    fn paint_frame_with_gradient_and_border_radius() {
+        let mut tree = TestTree::new();
+        tree.root = Some(1);
+        tree.layouts.insert(
+            1,
+            NodeLayout {
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 5.0,
+            },
+        );
+        tree.styles.insert(
+            1,
+            PixelNodeStyle {
+                gradient: Some(PixelGradient {
+                    angle_deg: 0.0,
+                    stops: vec![(0.0, [255, 0, 0, 255]), (1.0, [0, 0, 255, 255])],
+                }),
+                border_radius: 8.0,
+                ..Default::default()
+            },
+        );
+        tree.children.insert(1, vec![]);
+
+        let mut r = PixelRenderer::new(10, 5, 8, 16);
+        let _output = r.paint_frame(&tree);
+
+        // Corner pixel should have reduced alpha or be transparent (rounded)
+        let corner = r.canvas.get_pixel(0, 0);
+        // Center should be filled
+        let center = r.canvas.get_pixel(40, 40);
+        assert!(
+            center[3] > corner[3],
+            "center alpha {} should exceed corner alpha {}",
+            center[3],
+            corner[3]
+        );
+    }
+
+    // -- paint_frame with overflow clipping ----------------------------------
+
+    #[test]
+    fn paint_frame_with_overflow_hidden_clips_fully_outside_child() {
+        let mut tree = TestTree::new();
+        tree.root = Some(1);
+
+        // Parent: 5x3 cells with overflow_hidden
+        tree.layouts.insert(
+            1,
+            NodeLayout {
+                x: 0.0,
+                y: 0.0,
+                width: 5.0,
+                height: 3.0,
+            },
+        );
+        tree.styles.insert(
+            1,
+            PixelNodeStyle {
+                bg: Some(Color::Rgb(0, 0, 100)),
+                overflow_hidden: true,
+                ..Default::default()
+            },
+        );
+        tree.children.insert(1, vec![2, 3]);
+
+        // Child 2 overlaps parent — should be painted
+        tree.layouts.insert(
+            2,
+            NodeLayout {
+                x: 1.0,
+                y: 0.0,
+                width: 3.0,
+                height: 2.0,
+            },
+        );
+        tree.styles.insert(
+            2,
+            PixelNodeStyle {
+                bg: Some(Color::Rgb(255, 0, 0)),
+                ..Default::default()
+            },
+        );
+        tree.children.insert(2, vec![]);
+
+        // Child 3 is entirely outside parent clip — should be skipped
+        tree.layouts.insert(
+            3,
+            NodeLayout {
+                x: 10.0, // way outside parent (5 cells wide)
+                y: 0.0,
+                width: 3.0,
+                height: 2.0,
+            },
+        );
+        tree.styles.insert(
+            3,
+            PixelNodeStyle {
+                bg: Some(Color::Rgb(0, 255, 0)),
+                ..Default::default()
+            },
+        );
+        tree.children.insert(3, vec![]);
+
+        let mut r = PixelRenderer::new(20, 5, 8, 16);
+        let _output = r.paint_frame(&tree);
+
+        // Child 2 should be visible (inside clip)
+        let inside = r.canvas.get_pixel(16, 8); // x=2 cells, y=0.5 cells
+        assert_eq!(inside[0], 255, "overlapping child should be red");
+
+        // Child 3 area should be empty (fully outside clip, skipped)
+        let outside = r.canvas.get_pixel(84, 8); // x=10.5 cells
+        assert_eq!(
+            outside[1], 0,
+            "fully-outside child should be clipped (skipped)"
+        );
+    }
+
+    // -- paint_frame with text_spans (multi-color text) ----------------------
+
+    /// Extended `TestTree` that supports `text_spans`.
+    struct TestTreeWithSpans {
+        inner: TestTree,
+        spans: std::collections::HashMap<u32, Vec<PixelTextSpan>>,
+    }
+
+    impl TestTreeWithSpans {
+        fn new() -> Self {
+            Self {
+                inner: TestTree::new(),
+                spans: std::collections::HashMap::new(),
+            }
+        }
+    }
+
+    impl PaintTree for TestTreeWithSpans {
+        fn root_node(&self) -> Option<u32> {
+            self.inner.root
+        }
+        fn node_layout(&self, node_id: u32) -> Option<NodeLayout> {
+            self.inner.layouts.get(&node_id).copied()
+        }
+        fn node_style(&self, node_id: u32) -> Option<PixelNodeStyle> {
+            self.inner.styles.get(&node_id).cloned()
+        }
+        fn text_content(&self, node_id: u32) -> Option<&str> {
+            self.inner.texts.get(&node_id).map(|s| s.as_str())
+        }
+        fn text_spans(&self, node_id: u32) -> Vec<PixelTextSpan> {
+            self.spans.get(&node_id).cloned().unwrap_or_default()
+        }
+        fn children(&self, node_id: u32) -> Vec<u32> {
+            self.inner
+                .children
+                .get(&node_id)
+                .cloned()
+                .unwrap_or_default()
+        }
+    }
+
+    #[test]
+    fn paint_frame_with_text_spans_multi_color() {
+        let mut tree = TestTreeWithSpans::new();
+        tree.inner.root = Some(1);
+        tree.inner.layouts.insert(
+            1,
+            NodeLayout {
+                x: 0.0,
+                y: 0.0,
+                width: 20.0,
+                height: 3.0,
+            },
+        );
+        tree.inner.styles.insert(
+            1,
+            PixelNodeStyle {
+                fg: Some(Color::Rgb(255, 255, 255)),
+                ..Default::default()
+            },
+        );
+        tree.inner.texts.insert(1, "AABB".to_string());
+        tree.inner.children.insert(1, vec![]);
+        // Color first two chars red, last two blue
+        tree.spans.insert(
+            1,
+            vec![
+                PixelTextSpan {
+                    start: 0,
+                    end: 2,
+                    fg: [255, 0, 0, 255],
+                },
+                PixelTextSpan {
+                    start: 2,
+                    end: 4,
+                    fg: [0, 0, 255, 255],
+                },
+            ],
+        );
+
+        let mut r = PixelRenderer::new(20, 3, 8, 16);
+        let _output = r.paint_frame(&tree);
+
+        // Should produce visible pixels (multi-color path exercised)
+        let non_transparent = r.canvas.data.chunks_exact(4).filter(|px| px[3] > 0).count();
+        assert!(
+            non_transparent > 0,
+            "multi-color text should produce visible pixels"
+        );
+    }
+
+    // -- paint_frame with dim text -------------------------------------------
+
+    #[test]
+    fn paint_frame_with_dim_text_has_reduced_alpha() {
+        let mut tree = TestTree::new();
+        tree.root = Some(1);
+        tree.layouts.insert(
+            1,
+            NodeLayout {
+                x: 0.0,
+                y: 0.0,
+                width: 20.0,
+                height: 3.0,
+            },
+        );
+        tree.styles.insert(
+            1,
+            PixelNodeStyle {
+                fg: Some(Color::Rgb(255, 255, 255)),
+                dim: true,
+                ..Default::default()
+            },
+        );
+        tree.texts.insert(1, "Hello".to_string());
+        tree.children.insert(1, vec![]);
+
+        let mut r = PixelRenderer::new(20, 3, 8, 16);
+        let _output = r.paint_frame(&tree);
+
+        // Should render text. Dim text uses alpha 140 instead of 255.
+        let non_transparent = r.canvas.data.chunks_exact(4).filter(|px| px[3] > 0).count();
+        assert!(
+            non_transparent > 0,
+            "dim text should produce visible pixels"
+        );
+
+        // No pixel should have alpha > 140 (the dim cap)
+        let max_alpha = r
+            .canvas
+            .data
+            .chunks_exact(4)
+            .map(|px| px[3])
+            .max()
+            .unwrap_or(0);
+        assert!(
+            max_alpha <= 140,
+            "dim text max alpha should be <= 140, got {max_alpha}"
+        );
+    }
+
+    // -- paint_frame with text decorations (underline, strikethrough) ---------
+
+    #[test]
+    fn paint_frame_with_underline_decoration() {
+        let mut tree = TestTree::new();
+        tree.root = Some(1);
+        tree.layouts.insert(
+            1,
+            NodeLayout {
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 3.0,
+            },
+        );
+        tree.styles.insert(
+            1,
+            PixelNodeStyle {
+                fg: Some(Color::Rgb(255, 255, 255)),
+                underline: true,
+                ..Default::default()
+            },
+        );
+        tree.texts.insert(1, "Test".to_string());
+        tree.children.insert(1, vec![]);
+
+        let mut r = PixelRenderer::new(10, 3, 8, 16);
+        let _output = r.paint_frame(&tree);
+
+        // Underline is drawn at y = text_y + font_size * 0.9.
+        // font_size defaults to cell_h = 16, so underline_y ~ 14.4.
+        // draw_line uses fill_rect(x, y - thickness/2, w, thickness), so
+        // actual rect y = 13.9, h = 1.0 → pixel row 13.
+        // Check a range around the expected position.
+        let has_underline =
+            (12..16u32).any(|row| (0..80u32).any(|x| r.canvas.get_pixel(x, row)[3] > 0));
+        assert!(has_underline, "should have underline pixels near y=13-15");
+    }
+
+    #[test]
+    fn paint_frame_with_strikethrough_decoration() {
+        let mut tree = TestTree::new();
+        tree.root = Some(1);
+        tree.layouts.insert(
+            1,
+            NodeLayout {
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 3.0,
+            },
+        );
+        tree.styles.insert(
+            1,
+            PixelNodeStyle {
+                fg: Some(Color::Rgb(255, 255, 255)),
+                strikethrough: true,
+                ..Default::default()
+            },
+        );
+        tree.texts.insert(1, "Test".to_string());
+        tree.children.insert(1, vec![]);
+
+        let mut r = PixelRenderer::new(10, 3, 8, 16);
+        let _output = r.paint_frame(&tree);
+
+        // Strikethrough at y = text_y + font_size * 0.5 = 8
+        let strike_row = 8u32;
+        let has_strike = (0..80).any(|x| r.canvas.get_pixel(x, strike_row)[3] > 0);
+        assert!(has_strike, "should have strikethrough pixels near y=8");
+    }
+
+    // -- paint_frame with custom font_size -----------------------------------
+
+    #[test]
+    fn paint_frame_with_custom_font_size() {
+        let mut tree = TestTree::new();
+        tree.root = Some(1);
+        tree.layouts.insert(
+            1,
+            NodeLayout {
+                x: 0.0,
+                y: 0.0,
+                width: 20.0,
+                height: 5.0,
+            },
+        );
+        tree.styles.insert(
+            1,
+            PixelNodeStyle {
+                fg: Some(Color::Rgb(255, 255, 255)),
+                font_size: Some(32.0),
+                ..Default::default()
+            },
+        );
+        tree.texts.insert(1, "A".to_string());
+        tree.children.insert(1, vec![]);
+
+        let mut r = PixelRenderer::new(20, 5, 8, 16);
+        let _output = r.paint_frame(&tree);
+
+        // With font_size=32 (double default 16), we should get more text pixels
+        let non_transparent = r.canvas.data.chunks_exact(4).filter(|px| px[3] > 0).count();
+        assert!(
+            non_transparent > 0,
+            "custom font_size should produce visible pixels"
+        );
+
+        // Compare with default font_size
+        let mut tree2 = TestTree::new();
+        tree2.root = Some(1);
+        tree2.layouts.insert(
+            1,
+            NodeLayout {
+                x: 0.0,
+                y: 0.0,
+                width: 20.0,
+                height: 5.0,
+            },
+        );
+        tree2.styles.insert(
+            1,
+            PixelNodeStyle {
+                fg: Some(Color::Rgb(255, 255, 255)),
+                ..Default::default()
+            },
+        );
+        tree2.texts.insert(1, "A".to_string());
+        tree2.children.insert(1, vec![]);
+
+        let mut r2 = PixelRenderer::new(20, 5, 8, 16);
+        let _output2 = r2.paint_frame(&tree2);
+        let non_transparent_default = r2
+            .canvas
+            .data
+            .chunks_exact(4)
+            .filter(|px| px[3] > 0)
+            .count();
+
+        assert!(
+            non_transparent > non_transparent_default,
+            "larger font should produce more pixels ({non_transparent} > {non_transparent_default})"
+        );
+    }
+
+    // -- paint_frame with box_shadow + borderRadius --------------------------
+
+    #[test]
+    fn paint_frame_with_box_shadow_and_border_radius() {
+        let mut tree = TestTree::new();
+        tree.root = Some(1);
+        tree.layouts.insert(
+            1,
+            NodeLayout {
+                x: 2.0,
+                y: 2.0,
+                width: 6.0,
+                height: 4.0,
+            },
+        );
+        tree.styles.insert(
+            1,
+            PixelNodeStyle {
+                bg: Some(Color::Rgb(100, 100, 255)),
+                border_radius: 6.0,
+                box_shadow: Some(PixelBoxShadow {
+                    offset_x: 3.0,
+                    offset_y: 3.0,
+                    blur_radius: 4.0,
+                    spread_radius: 2.0,
+                    color: [0, 0, 0, 128],
+                }),
+                ..Default::default()
+            },
+        );
+        tree.children.insert(1, vec![]);
+
+        let mut r = PixelRenderer::new(12, 10, 8, 16);
+        let _output = r.paint_frame(&tree);
+
+        // Shadow should produce pixels beyond the node area
+        let non_transparent = r.canvas.data.chunks_exact(4).filter(|px| px[3] > 0).count();
+        assert!(
+            non_transparent > 0,
+            "shadow with border_radius should produce visible pixels"
+        );
+    }
+
+    // -- save_screenshot ----------------------------------------------------
+
+    #[test]
+    fn save_screenshot_creates_png_file() {
+        let mut r = PixelRenderer::new(4, 2, 8, 16);
+        r.canvas.fill([255, 0, 0, 255]);
+
+        let path = std::env::temp_dir().join("kittyui_test_screenshot.png");
+        let path_str = path.to_str().unwrap();
+
+        // Clean up any previous test artifact
+        let _ = std::fs::remove_file(path_str);
+
+        let result = r.save_screenshot(path_str);
+        assert!(
+            result.is_ok(),
+            "save_screenshot should succeed: {:?}",
+            result.err()
+        );
+        assert!(path.exists(), "PNG file should exist at {path_str}");
+
+        // Verify it's a valid PNG by checking file size > 0
+        let metadata = std::fs::metadata(path_str).unwrap();
+        assert!(metadata.len() > 0, "PNG file should not be empty");
+
+        // Clean up
+        let _ = std::fs::remove_file(path_str);
+    }
+
+    // -- palette_index_to_rgb ------------------------------------------------
+
+    #[test]
+    fn palette_index_to_rgb_ansi_range() {
+        // 0-7 should delegate to ansi_index_to_rgb
+        assert_eq!(palette_index_to_rgb(0, 255), [0, 0, 0, 255]);
+        assert_eq!(palette_index_to_rgb(1, 255), [170, 0, 0, 255]);
+        assert_eq!(palette_index_to_rgb(7, 255), [170, 170, 170, 255]);
+    }
+
+    #[test]
+    fn palette_index_to_rgb_bright_range() {
+        // 8-15 should delegate to ansi_bright_index_to_rgb
+        assert_eq!(palette_index_to_rgb(8, 255), [85, 85, 85, 255]); // bright black
+        assert_eq!(palette_index_to_rgb(9, 255), [255, 85, 85, 255]); // bright red
+        assert_eq!(palette_index_to_rgb(15, 255), [255, 255, 255, 255]); // bright white
+    }
+
+    #[test]
+    fn palette_index_to_rgb_color_cube() {
+        // Index 16 = (0,0,0) in 6x6x6 cube → all zeros
+        assert_eq!(palette_index_to_rgb(16, 255), [0, 0, 0, 255]);
+        // Index 196 = r=5,g=0,b=0 → (255, 0, 0) since to_rgb(5) = 55+40*5 = 255
+        assert_eq!(palette_index_to_rgb(196, 255), [255, 0, 0, 255]);
+        // Index 21 = r=0,g=0,b=5 → (0, 0, 255)
+        assert_eq!(palette_index_to_rgb(21, 255), [0, 0, 255, 255]);
+        // Index 46 = r=0,g=5,b=0 → (0, 255, 0)
+        assert_eq!(palette_index_to_rgb(46, 255), [0, 255, 0, 255]);
+        // Index 231 = r=5,g=5,b=5 → (255, 255, 255)
+        assert_eq!(palette_index_to_rgb(231, 255), [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn palette_index_to_rgb_grayscale_ramp() {
+        // 232 → 8 + 10*(232-232) = 8
+        assert_eq!(palette_index_to_rgb(232, 255), [8, 8, 8, 255]);
+        // 255 → 8 + 10*(255-232) = 8 + 230 = 238
+        assert_eq!(palette_index_to_rgb(255, 255), [238, 238, 238, 255]);
+        // Mid-range: 243 → 8 + 10*11 = 118
+        assert_eq!(palette_index_to_rgb(243, 255), [118, 118, 118, 255]);
+    }
+
+    // -- ansi_index_to_rgb ---------------------------------------------------
+
+    #[test]
+    fn ansi_index_to_rgb_all_basic_colors() {
+        assert_eq!(ansi_index_to_rgb(0, 255), [0, 0, 0, 255]); // black
+        assert_eq!(ansi_index_to_rgb(1, 255), [170, 0, 0, 255]); // red
+        assert_eq!(ansi_index_to_rgb(2, 255), [0, 170, 0, 255]); // green
+        assert_eq!(ansi_index_to_rgb(3, 255), [170, 170, 0, 255]); // yellow
+        assert_eq!(ansi_index_to_rgb(4, 255), [0, 0, 170, 255]); // blue
+        assert_eq!(ansi_index_to_rgb(5, 255), [170, 0, 170, 255]); // magenta
+        assert_eq!(ansi_index_to_rgb(6, 255), [0, 170, 170, 255]); // cyan
+        assert_eq!(ansi_index_to_rgb(7, 255), [170, 170, 170, 255]); // white
+                                                                     // Out of range fallback
+        assert_eq!(ansi_index_to_rgb(8, 255), [128, 128, 128, 255]);
+    }
+
+    // -- ansi_bright_index_to_rgb --------------------------------------------
+
+    #[test]
+    fn ansi_bright_index_to_rgb_all_bright_colors() {
+        assert_eq!(ansi_bright_index_to_rgb(0, 255), [85, 85, 85, 255]); // bright black
+        assert_eq!(ansi_bright_index_to_rgb(1, 255), [255, 85, 85, 255]); // bright red
+        assert_eq!(ansi_bright_index_to_rgb(2, 255), [85, 255, 85, 255]); // bright green
+        assert_eq!(ansi_bright_index_to_rgb(3, 255), [255, 255, 85, 255]); // bright yellow
+        assert_eq!(ansi_bright_index_to_rgb(4, 255), [85, 85, 255, 255]); // bright blue
+        assert_eq!(ansi_bright_index_to_rgb(5, 255), [255, 85, 255, 255]); // bright magenta
+        assert_eq!(ansi_bright_index_to_rgb(6, 255), [85, 255, 255, 255]); // bright cyan
+        assert_eq!(ansi_bright_index_to_rgb(7, 255), [255, 255, 255, 255]); // bright white
+                                                                            // Out of range fallback
+        assert_eq!(ansi_bright_index_to_rgb(8, 255), [192, 192, 192, 255]);
+    }
+
+    // -- fnv_hash ------------------------------------------------------------
+
+    #[test]
+    fn fnv_hash_deterministic() {
+        let data = b"hello world";
+        let h1 = fnv_hash(data);
+        let h2 = fnv_hash(data);
+        assert_eq!(h1, h2, "same input should produce same hash");
+    }
+
+    #[test]
+    fn fnv_hash_different_inputs_different_hashes() {
+        let h1 = fnv_hash(b"hello");
+        let h2 = fnv_hash(b"world");
+        let h3 = fnv_hash(b"");
+        assert_ne!(h1, h2, "different inputs should produce different hashes");
+        assert_ne!(h1, h3);
+        assert_ne!(h2, h3);
+    }
+
+    // -- color_to_rgba with Palette variant ----------------------------------
+
+    #[test]
+    fn color_to_rgba_palette_variant() {
+        // Palette(196) = bright red in 6x6x6 cube
+        let c = color_to_rgba(&Color::Palette(196), 255);
+        assert_eq!(c, [255, 0, 0, 255]);
+
+        // Palette(232) = darkest grayscale
+        let c = color_to_rgba(&Color::Palette(232), 200);
+        assert_eq!(c, [8, 8, 8, 200]);
+    }
+
+    // -- color_to_rgba with Ansi variant (already tested for 0, test more) ---
+
+    #[test]
+    fn color_to_rgba_ansi_all_indices() {
+        for idx in 0..8 {
+            let c = color_to_rgba(&Color::Ansi(idx), 128);
+            assert_eq!(c[3], 128, "alpha should be passed through for Ansi({idx})");
+        }
+    }
+
+    // -- color_to_rgba with AnsiBright variant --------------------------------
+
+    #[test]
+    fn color_to_rgba_ansi_bright_all_indices() {
+        for idx in 0..8 {
+            let c = color_to_rgba(&Color::AnsiBright(idx), 200);
+            assert_eq!(
+                c[3], 200,
+                "alpha should be passed through for AnsiBright({idx})"
+            );
+        }
+    }
+
+    // -- paint_frame with deeply nested tree (3+ levels) ---------------------
+
+    #[test]
+    fn paint_frame_deeply_nested_tree() {
+        let mut tree = TestTree::new();
+        tree.root = Some(1);
+
+        // Level 1: root container
+        tree.layouts.insert(
+            1,
+            NodeLayout {
+                x: 0.0,
+                y: 0.0,
+                width: 20.0,
+                height: 10.0,
+            },
+        );
+        tree.styles.insert(
+            1,
+            PixelNodeStyle {
+                bg: Some(Color::Rgb(50, 50, 50)),
+                ..Default::default()
+            },
+        );
+        tree.children.insert(1, vec![2]);
+
+        // Level 2: nested child
+        tree.layouts.insert(
+            2,
+            NodeLayout {
+                x: 1.0,
+                y: 1.0,
+                width: 10.0,
+                height: 5.0,
+            },
+        );
+        tree.styles.insert(
+            2,
+            PixelNodeStyle {
+                bg: Some(Color::Rgb(0, 128, 0)),
+                ..Default::default()
+            },
+        );
+        tree.children.insert(2, vec![3]);
+
+        // Level 3: deeply nested grandchild
+        tree.layouts.insert(
+            3,
+            NodeLayout {
+                x: 1.0,
+                y: 1.0,
+                width: 4.0,
+                height: 2.0,
+            },
+        );
+        tree.styles.insert(
+            3,
+            PixelNodeStyle {
+                bg: Some(Color::Rgb(255, 0, 0)),
+                ..Default::default()
+            },
+        );
+        tree.children.insert(3, vec![]);
+
+        let mut r = PixelRenderer::new(20, 10, 8, 16);
+        let _output = r.paint_frame(&tree);
+
+        // Grandchild absolute position: (1+1)*8=16, (1+1)*16=32 → pixel (20, 36) should be red
+        let p = r.canvas.get_pixel(20, 36);
+        assert_eq!(p[0], 255, "grandchild should be red, got r={}", p[0]);
+
+        // Level 2 area (outside grandchild): pixel (10, 20) should be green
+        let p = r.canvas.get_pixel(10, 20);
+        assert_eq!(p[1], 128, "child area should be green, got g={}", p[1]);
+
+        // Level 1 area (outside child): pixel (4, 4) should be gray
+        let p = r.canvas.get_pixel(4, 4);
+        assert_eq!(p[0], 50, "root area should be gray, got r={}", p[0]);
+    }
+
+    // -- encode_tiles with multiple rows changed -----------------------------
+
+    #[test]
+    fn encode_tiles_multiple_rows_changed() {
+        let mut r = PixelRenderer::new(4, 4, 8, 16);
+        r.canvas.fill([10, 20, 30, 255]);
+
+        // First frame: transmit all
+        let _ = r.encode_tiles();
+
+        // Modify pixels in rows 0 and 2 (leave rows 1 and 3 unchanged)
+        r.canvas.set_pixel(0, 0, [255, 0, 0, 255]); // row 0
+        r.canvas.set_pixel(0, 32, [0, 255, 0, 255]); // row 2 (y = 2 * 16)
+
+        let output = r.encode_tiles();
+        let text = String::from_utf8_lossy(&output);
+
+        let transmit_count = text.matches("a=t").count();
+        assert_eq!(
+            transmit_count, 2,
+            "exactly 2 rows should be retransmitted, got {transmit_count}"
+        );
+    }
 }
