@@ -9,7 +9,8 @@ use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
-use crate::ansi::{self, Color};
+use crate::ansi::{self, Color, Style as CellStyle};
+use crate::cell::DoubleBuffer;
 use crate::focus::{FocusManager, FocusMeta};
 use crate::hit_test::HitTester;
 use crate::layout::{LayoutNodeId, LayoutTree, NodeStyle};
@@ -70,6 +71,24 @@ enum BorderPreset {
 }
 
 impl BorderPreset {
+    /// Returns (tl, tr, bl, br, horizontal, vertical) box-drawing characters.
+    const fn chars(self) -> (char, char, char, char, char, char) {
+        match self {
+            Self::Single => (
+                '\u{250c}', '\u{2510}', '\u{2514}', '\u{2518}', '\u{2500}', '\u{2502}',
+            ),
+            Self::Round => (
+                '\u{256d}', '\u{256e}', '\u{2570}', '\u{256f}', '\u{2500}', '\u{2502}',
+            ),
+            Self::Double => (
+                '\u{2554}', '\u{2557}', '\u{255a}', '\u{255d}', '\u{2550}', '\u{2551}',
+            ),
+            Self::Bold => (
+                '\u{250f}', '\u{2513}', '\u{2517}', '\u{251b}', '\u{2501}', '\u{2503}',
+            ),
+        }
+    }
+
     fn from_str(s: &str) -> Option<Self> {
         match s {
             "single" => Some(Self::Single),
@@ -84,10 +103,6 @@ impl BorderPreset {
 /// Border style for a node.
 #[derive(Clone, Debug)]
 struct BorderStyle {
-    /// Preset is parsed from JSON but only used to detect border presence
-    /// in the pixel renderer (the cell-based box-drawing path was removed
-    /// in issue #156).
-    #[allow(dead_code)]
     preset: BorderPreset,
     color: Option<Color>,
 }
@@ -195,6 +210,8 @@ struct EngineState {
     hit_tester: HitTester,
     /// Reverse map from layout node ids to user-facing u32 ids.
     reverse_node_map: HashMap<LayoutNodeId, u32>,
+    /// Double buffer for cell-based rendering (test mode only).
+    double_buf: DoubleBuffer,
     /// Visual (non-layout) style per node.
     visual_styles: HashMap<u32, NodeVisualStyle>,
     /// Output writer — `None` means write to real stdout.
@@ -229,6 +246,7 @@ impl EngineState {
             focus: FocusManager::new(),
             hit_tester: HitTester::new(),
             reverse_node_map: HashMap::new(),
+            double_buf: DoubleBuffer::new(80, 24),
             visual_styles: HashMap::new(),
             output: None,
             terminal_caps: terminal_caps::detect(),
@@ -252,6 +270,16 @@ impl EngineState {
         } else {
             let _ = std::io::stdout().lock().write_all(data);
             let _ = std::io::stdout().lock().flush();
+        }
+    }
+
+    /// Ensure the double buffer matches the current cols/rows dimensions.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn ensure_buffer_size(&mut self) {
+        let w = self.cols as usize;
+        let h = self.rows as usize;
+        if self.double_buf.width() != w || self.double_buf.height() != h {
+            self.double_buf.resize(w, h);
         }
     }
 }
@@ -536,6 +564,7 @@ pub unsafe extern "C" fn init_test_mode(cols: u16, rows: u16, out_ptr: *mut Init
     state.output = Some(Vec::new());
     state.cols = f32::from(cols);
     state.rows = f32::from(rows);
+    state.double_buf = DoubleBuffer::new(usize::from(cols), usize::from(rows));
     *guard = Some(state);
     if !out_ptr.is_null() {
         unsafe {
@@ -1490,9 +1519,280 @@ fn color_to_rgba(color: Color, alpha: u8) -> [u8; 4] {
     }
 }
 
+/// Check whether a cell at (row, col) is inside the active clip rectangle.
+#[allow(clippy::cast_precision_loss)]
+fn in_clip(row: usize, col: usize, clip: Option<(f32, f32, f32, f32)>) -> bool {
+    if let Some((cx, cy, cw, ch)) = clip {
+        let col_f = col as f32;
+        let row_f = row as f32;
+        col_f >= cx && col_f < cx + cw && row_f >= cy && row_f < cy + ch
+    } else {
+        true
+    }
+}
+
+/// Intersect an optional inherited clip rect with a new rect.
+fn intersect_clip(
+    inherited: Option<(f32, f32, f32, f32)>,
+    rect: (f32, f32, f32, f32),
+) -> (f32, f32, f32, f32) {
+    if let Some((ix, iy, iw, ih)) = inherited {
+        let x0 = ix.max(rect.0);
+        let y0 = iy.max(rect.1);
+        let x1 = (ix + iw).min(rect.0 + rect.2);
+        let y1 = (iy + ih).min(rect.1 + rect.3);
+        (x0, y0, (x1 - x0).max(0.0), (y1 - y0).max(0.0))
+    } else {
+        rect
+    }
+}
+
+/// Walk the layout tree recursively and paint each node into the cell buffer.
+/// Used only in test mode for VirtualScreen verification.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    clippy::similar_names
+)]
+#[allow(clippy::fn_params_excessive_bools)]
+fn paint_node(
+    state: &EngineState,
+    back: &mut crate::cell::CellBuffer,
+    node_id: u32,
+    parent_x: f32,
+    parent_y: f32,
+    inherited_bg: Option<Color>,
+    inherited_fg: Option<Color>,
+    inherited_bold: bool,
+    inherited_italic: bool,
+    inherited_underline: bool,
+    inherited_strikethrough: bool,
+    inherited_dim: bool,
+    clip_rect: Option<(f32, f32, f32, f32)>,
+) {
+    let Some(&layout_id) = state.node_map.get(&node_id) else {
+        return;
+    };
+    let Ok(cl) = state.layout.get_layout(layout_id) else {
+        return;
+    };
+
+    let abs_x = parent_x + cl.x;
+    let abs_y = parent_y + cl.y;
+    let x0 = abs_x as usize;
+    let y0 = abs_y as usize;
+    let w = cl.width as usize;
+    let h = cl.height as usize;
+
+    // Build cell style from visual style, inheriting from ancestors.
+    let vs = state.visual_styles.get(&node_id);
+    let own_bg = vs.and_then(|v| v.bg);
+    let own_fg = vs.and_then(|v| v.fg);
+    let resolved_bg = own_bg.or(inherited_bg);
+    let resolved_fg = own_fg.or(inherited_fg);
+    let resolved_bold = vs.map_or(
+        inherited_bold,
+        |v| if v.bold { true } else { inherited_bold },
+    );
+    let resolved_italic = vs.map_or(inherited_italic, |v| {
+        if v.italic {
+            true
+        } else {
+            inherited_italic
+        }
+    });
+    let resolved_underline = vs.map_or(inherited_underline, |v| {
+        if v.underline {
+            true
+        } else {
+            inherited_underline
+        }
+    });
+    let resolved_strikethrough = vs.map_or(inherited_strikethrough, |v| {
+        if v.strikethrough {
+            true
+        } else {
+            inherited_strikethrough
+        }
+    });
+    let resolved_dim = vs.map_or(inherited_dim, |v| if v.dim { true } else { inherited_dim });
+
+    // Paint cell-based background.
+    if resolved_bg.is_some() {
+        let cell_style = CellStyle {
+            bg: resolved_bg,
+            fg: resolved_fg,
+            bold: resolved_bold,
+            italic: resolved_italic,
+            underline: resolved_underline,
+            strikethrough: resolved_strikethrough,
+            dim: resolved_dim,
+            ..CellStyle::new()
+        };
+        for row in y0..y0 + h {
+            for col in x0..x0 + w {
+                if !in_clip(row, col, clip_rect) {
+                    continue;
+                }
+                if let Some(cell) = back.get_mut(row, col) {
+                    cell.ch = ' ';
+                    cell.style = cell_style;
+                }
+            }
+        }
+    }
+
+    // Paint border if present.
+    if let Some(border) = vs.and_then(|v| v.border.as_ref()) {
+        if w >= 2 && h >= 2 {
+            let (tl, tr, bl, br, horiz, vert) = border.preset.chars();
+            let border_style = CellStyle {
+                fg: border.color.or(resolved_fg),
+                bg: inherited_bg,
+                ..CellStyle::new()
+            };
+
+            // Corners
+            if let Some(cell) = back.get_mut(y0, x0) {
+                cell.ch = tl;
+                cell.style = border_style;
+            }
+            if let Some(cell) = back.get_mut(y0, x0 + w - 1) {
+                cell.ch = tr;
+                cell.style = border_style;
+            }
+            if let Some(cell) = back.get_mut(y0 + h - 1, x0) {
+                cell.ch = bl;
+                cell.style = border_style;
+            }
+            if let Some(cell) = back.get_mut(y0 + h - 1, x0 + w - 1) {
+                cell.ch = br;
+                cell.style = border_style;
+            }
+
+            // Horizontal edges (top and bottom)
+            for col in (x0 + 1)..(x0 + w - 1) {
+                if let Some(cell) = back.get_mut(y0, col) {
+                    cell.ch = horiz;
+                    cell.style = border_style;
+                }
+                if let Some(cell) = back.get_mut(y0 + h - 1, col) {
+                    cell.ch = horiz;
+                    cell.style = border_style;
+                }
+            }
+
+            // Vertical edges (left and right)
+            for row in (y0 + 1)..(y0 + h - 1) {
+                if let Some(cell) = back.get_mut(row, x0) {
+                    cell.ch = vert;
+                    cell.style = border_style;
+                }
+                if let Some(cell) = back.get_mut(row, x0 + w - 1) {
+                    cell.ch = vert;
+                    cell.style = border_style;
+                }
+            }
+        }
+    }
+
+    // Paint text content.
+    let text_overflow = vs.map_or(TextOverflow::Clip, |v| v.text_overflow);
+    if let Some(text) = state.text_content.get(&node_id) {
+        if !text.is_empty() && w > 0 {
+            let char_count = text.chars().count();
+            let needs_ellipsis = text_overflow == TextOverflow::Ellipsis && char_count > w;
+            let paint_limit = if needs_ellipsis { w - 1 } else { w };
+            let spans = state.text_spans.get(&node_id);
+            for (i, ch) in text.chars().enumerate() {
+                if i >= paint_limit {
+                    break;
+                }
+                let c = x0 + i;
+                if c >= back.width() {
+                    break;
+                }
+                if y0 < back.height() {
+                    if !in_clip(y0, c, clip_rect) {
+                        continue;
+                    }
+                    if let Some(cell) = back.get_mut(y0, c) {
+                        cell.ch = ch;
+                        cell.style.bold = resolved_bold;
+                        cell.style.italic = resolved_italic;
+                        cell.style.underline = resolved_underline;
+                        cell.style.strikethrough = resolved_strikethrough;
+                        cell.style.dim = resolved_dim;
+                        let span_fg = spans.and_then(|ss| {
+                            let idx = i as u16;
+                            ss.iter()
+                                .rev()
+                                .find(|s| idx >= s.start && idx < s.end)
+                                .map(|s| s.fg)
+                        });
+                        cell.style.fg = span_fg.or(resolved_fg);
+                        if let Some(bg) = resolved_bg {
+                            cell.style.bg = Some(bg);
+                        }
+                    }
+                }
+            }
+            // Place ellipsis character at the last position.
+            if needs_ellipsis {
+                let c = x0 + paint_limit;
+                if c < back.width() && y0 < back.height() {
+                    if let Some(cell) = back.get_mut(y0, c) {
+                        cell.ch = '\u{2026}'; // ellipsis
+                        cell.style.bold = resolved_bold;
+                        cell.style.italic = resolved_italic;
+                        if let Some(fg) = resolved_fg {
+                            cell.style.fg = Some(fg);
+                        }
+                        if let Some(bg) = resolved_bg {
+                            cell.style.bg = Some(bg);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Determine the clip rect for children.
+    let own_overflow = vs.map_or(Overflow::Visible, |v| v.overflow);
+    let child_clip = if own_overflow == Overflow::Hidden {
+        let own_rect = (abs_x, abs_y, cl.width, cl.height);
+        Some(intersect_clip(clip_rect, own_rect))
+    } else {
+        clip_rect
+    };
+
+    // Recurse into children.
+    if let Ok(children) = state.layout.children(layout_id) {
+        for child_lid in children {
+            if let Some(&child_uid) = state.reverse_node_map.get(&child_lid) {
+                paint_node(
+                    state,
+                    back,
+                    child_uid,
+                    abs_x,
+                    abs_y,
+                    resolved_bg,
+                    resolved_fg,
+                    resolved_bold,
+                    resolved_italic,
+                    resolved_underline,
+                    resolved_strikethrough,
+                    resolved_dim,
+                    child_clip,
+                );
+            }
+        }
+    }
+}
+
 /// Run the full render pipeline: layout, paint, output, flush events.
-///
-/// Uses the pixel renderer exclusively (issue #156 removed the cell-based path).
 #[no_mangle]
 pub extern "C" fn render_frame() {
     with_engine(|state| {
@@ -1513,34 +1813,77 @@ pub extern "C" fn render_frame() {
 
         // 2. Paint and output only when dirty.
         if state.dirty {
-            // Lazily initialise the pixel renderer.
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            if state.pixel_renderer.is_none() {
-                let cell_w = state.terminal_caps.cell_pixel_width;
-                let cell_h = state.terminal_caps.cell_pixel_height;
-                state.pixel_renderer = Some(PixelRenderer::new(
-                    state.cols as u32,
-                    state.rows as u32,
-                    cell_w,
-                    cell_h,
-                ));
-            }
+            let is_test_mode = state.output.is_some();
 
-            // Take the pixel renderer out temporarily to avoid
-            // borrow conflicts (paint_frame needs &EngineState while
-            // the renderer itself lives inside EngineState).
-            if let Some(mut pr) = state.pixel_renderer.take() {
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                pr.resize(state.cols as u32, state.rows as u32);
-                let output = pr.paint_frame(state);
-                state.write_output(&output);
+            if is_test_mode {
+                // Test mode: cell-based rendering for VirtualScreen verification.
+                state.ensure_buffer_size();
+                state.double_buf.back_mut().clear();
 
-                // Auto-save screenshot if KITTYUI_SCREENSHOT env var is set.
-                if let Ok(path) = std::env::var("KITTYUI_SCREENSHOT") {
-                    let _ = pr.save_screenshot(&path);
+                if let Some(root_id) = state.root_node {
+                    // Temporarily take the back buffer out so we can pass state
+                    // immutably to `paint_node` while mutating the buffer.
+                    let mut back_buf = {
+                        let back = state.double_buf.back_mut();
+                        let w = back.width();
+                        let h = back.height();
+                        let mut tmp = crate::cell::CellBuffer::new(w, h);
+                        std::mem::swap(back, &mut tmp);
+                        tmp
+                    };
+
+                    paint_node(
+                        state,
+                        &mut back_buf,
+                        root_id,
+                        0.0,
+                        0.0,
+                        None,
+                        None,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        None,
+                    );
+
+                    // Swap the painted buffer back.
+                    std::mem::swap(state.double_buf.back_mut(), &mut back_buf);
                 }
 
-                state.pixel_renderer = Some(pr);
+                let rendered = state.double_buf.full_render();
+                if !rendered.is_empty() {
+                    state.write_output(&rendered);
+                }
+                state.double_buf.swap_no_clear();
+            } else {
+                // Real mode: pixel rendering via Kitty graphics protocol.
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                if state.pixel_renderer.is_none() {
+                    let cell_w = state.terminal_caps.cell_pixel_width;
+                    let cell_h = state.terminal_caps.cell_pixel_height;
+                    state.pixel_renderer = Some(PixelRenderer::new(
+                        state.cols as u32,
+                        state.rows as u32,
+                        cell_w,
+                        cell_h,
+                    ));
+                }
+
+                if let Some(mut pr) = state.pixel_renderer.take() {
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    pr.resize(state.cols as u32, state.rows as u32);
+                    let output = pr.paint_frame(state);
+                    state.write_output(&output);
+
+                    // Auto-save screenshot if KITTYUI_SCREENSHOT env var is set.
+                    if let Ok(path) = std::env::var("KITTYUI_SCREENSHOT") {
+                        let _ = pr.save_screenshot(&path);
+                    }
+
+                    state.pixel_renderer = Some(pr);
+                }
             }
         }
 
@@ -2565,10 +2908,88 @@ mod tests {
 
     // -- Render pipeline tests --
 
-    // Cell-based rendering tests removed (issue #156).
-    // `render_frame_produces_ansi_output_with_styles` and
-    // `unchanged_frames_produce_no_diff_after_swap` tested ANSI/cell output
-    // which no longer exists; the pixel renderer is the sole path.
+    #[test]
+    #[serial]
+    fn render_frame_produces_ansi_output_with_styles() {
+        setup();
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(
+            1,
+            r#"{"width":80,"height":24,"flexDirection":"column"}"#,
+        ));
+        buf.extend(encode_create_node(
+            2,
+            r##"{"width":10,"height":3,"backgroundColor":"#FF0000","color":"#00FF00"}"##,
+        ));
+        buf.extend(encode_append_child(1, 2));
+        buf.extend(encode_set_text(2, "Hi"));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        render_frame();
+
+        let output = get_output();
+        let output_str = String::from_utf8_lossy(&output);
+        assert!(
+            !output.is_empty(),
+            "render_frame should produce output when nodes have styles"
+        );
+        assert!(
+            output_str.contains('H'),
+            "output should contain CUP sequence"
+        );
+        assert!(output_str.contains("Hi"), "output should contain text 'Hi'");
+        assert!(
+            output_str.contains("48;2;255;0;0"),
+            "output should contain red background SGR: {output_str}"
+        );
+        assert!(
+            output_str.contains("38;2;0;255;0"),
+            "output should contain green foreground SGR: {output_str}"
+        );
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn unchanged_frames_produce_no_diff_after_swap() {
+        setup();
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(
+            1,
+            r#"{"width":80,"height":24,"flexDirection":"column"}"#,
+        ));
+        buf.extend(encode_create_node(
+            2,
+            r##"{"width":5,"height":2,"backgroundColor":"#0000FF"}"##,
+        ));
+        buf.extend(encode_append_child(1, 2));
+        buf.extend(encode_set_text(2, "AB"));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        render_frame();
+        let first_output = get_output();
+        assert!(
+            !first_output.is_empty(),
+            "first render should produce output"
+        );
+
+        clear_output();
+        request_render();
+        render_frame();
+
+        let second_output = get_output();
+        assert!(
+            !second_output.is_empty(),
+            "second render in test mode should produce full output"
+        );
+        assert_eq!(
+            first_output, second_output,
+            "unchanged content should produce identical output"
+        );
+
+        teardown();
+    }
 
     #[test]
     #[serial]
@@ -2746,6 +3167,8 @@ mod tests {
         with_engine(|state| {
             assert!((state.cols - 40.0).abs() < f32::EPSILON);
             assert!((state.rows - 10.0).abs() < f32::EPSILON);
+            assert_eq!(state.double_buf.width(), 40);
+            assert_eq!(state.double_buf.height(), 10);
             assert!(state.output.is_some());
         });
         teardown();
@@ -2826,6 +3249,294 @@ mod tests {
         let json = br#"{"textDecoration":"line-through"}"#;
         let vs = parse_visual_style_json(json);
         assert!(vs.strikethrough);
+    }
+
+    #[test]
+    #[serial]
+    fn double_buffer_resizes_on_cols_rows_change() {
+        setup();
+        let buf = encode_create_node(1, r#"{"width":80,"height":24}"#);
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        // Change terminal size.
+        with_engine(|state| {
+            state.cols = 40.0;
+            state.rows = 10.0;
+            state.dirty = true;
+        });
+
+        render_frame();
+
+        with_engine(|state| {
+            assert_eq!(state.double_buf.width(), 40);
+            assert_eq!(state.double_buf.height(), 10);
+        });
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn text_ellipsis_truncates_with_ellipsis_char() {
+        setup();
+
+        let mut buf = encode_create_node(1, r#"{"width":80,"height":24,"flexDirection":"column"}"#);
+        buf.extend(encode_create_node(
+            2,
+            r#"{"width":8,"height":1,"textOverflow":"ellipsis"}"#,
+        ));
+        buf.extend(encode_append_child(1, 2));
+        buf.extend(encode_set_text(2, "Hello World"));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        render_frame();
+
+        with_engine(|state| {
+            let back = state.double_buf.back();
+            let mut rendered = String::new();
+            for col in 0..8 {
+                if let Some(cell) = back.get(0, col) {
+                    rendered.push(cell.ch);
+                }
+            }
+            assert_eq!(rendered, "Hello W\u{2026}");
+        });
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn text_that_fits_is_not_ellipsized() {
+        setup();
+
+        let mut buf = encode_create_node(1, r#"{"width":80,"height":24,"flexDirection":"column"}"#);
+        buf.extend(encode_create_node(
+            2,
+            r#"{"width":8,"height":1,"textOverflow":"ellipsis"}"#,
+        ));
+        buf.extend(encode_append_child(1, 2));
+        buf.extend(encode_set_text(2, "Hi"));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        render_frame();
+
+        with_engine(|state| {
+            let back = state.double_buf.back();
+            assert_eq!(back.get(0, 0).unwrap().ch, 'H');
+            assert_eq!(back.get(0, 1).unwrap().ch, 'i');
+            assert_eq!(back.get(0, 2).unwrap().ch, ' ');
+        });
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn overflow_hidden_clips_child_background() {
+        setup();
+
+        let buf = encode_create_node(1, r#"{"width":10,"height":1,"overflow":"hidden"}"#);
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        let buf = encode_create_node(
+            2,
+            r##"{"width":20,"height":1,"backgroundColor":"#ff0000","flexShrink":0}"##,
+        );
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        let buf = encode_append_child(1, 2);
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        with_engine(|state| {
+            state.root_node = Some(1);
+            state.dirty = true;
+        });
+
+        render_frame();
+
+        with_engine(|state| {
+            let back = state.double_buf.back();
+            for col in 0..10 {
+                let cell = back.get(0, col).unwrap();
+                assert_eq!(
+                    cell.style.bg,
+                    Some(crate::ansi::Color::Rgb(255, 0, 0)),
+                    "cell at col {col} should have red bg"
+                );
+            }
+            for col in 10..20 {
+                if let Some(cell) = back.get(0, col) {
+                    assert_ne!(
+                        cell.style.bg,
+                        Some(crate::ansi::Color::Rgb(255, 0, 0)),
+                        "cell at col {col} should NOT have red bg (clipped)"
+                    );
+                }
+            }
+        });
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn border_round_produces_corners() {
+        setup();
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(
+            1,
+            r#"{"width":80,"height":24,"flexDirection":"column"}"#,
+        ));
+        buf.extend(encode_create_node(
+            2,
+            r##"{"width":10,"height":5,"border":"round","borderColor":"#FF0000"}"##,
+        ));
+        buf.extend(encode_append_child(1, 2));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        render_frame();
+
+        with_engine(|state| {
+            let back = state.double_buf.back();
+            assert_eq!(
+                back.get(0, 0).map(|c| c.ch),
+                Some('\u{256d}'),
+                "top-left should be ╭"
+            );
+            assert_eq!(
+                back.get(0, 9).map(|c| c.ch),
+                Some('\u{256e}'),
+                "top-right should be ╮"
+            );
+            assert_eq!(
+                back.get(4, 0).map(|c| c.ch),
+                Some('\u{2570}'),
+                "bottom-left should be ╰"
+            );
+            assert_eq!(
+                back.get(4, 9).map(|c| c.ch),
+                Some('\u{256f}'),
+                "bottom-right should be ╯"
+            );
+            assert_eq!(
+                back.get(0, 1).map(|c| c.ch),
+                Some('\u{2500}'),
+                "top edge should be ─"
+            );
+            assert_eq!(
+                back.get(1, 0).map(|c| c.ch),
+                Some('\u{2502}'),
+                "left edge should be │"
+            );
+            let corner_style = &back.get(0, 0).unwrap().style;
+            assert_eq!(
+                corner_style.fg,
+                Some(Color::Rgb(255, 0, 0)),
+                "border fg should be red"
+            );
+        });
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn underline_text_emits_sgr4() {
+        teardown();
+        unsafe { init_test_mode(20, 3, std::ptr::null_mut()) };
+
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(1, r#"{"width":20,"height":3}"#));
+        buf.extend(encode_create_node(
+            2,
+            r#"{"width":20,"height":1,"underline":true}"#,
+        ));
+        buf.extend(encode_set_text(2, "hello"));
+        buf.extend(encode_append_child(1, 2));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+        render_frame();
+
+        with_engine(|state| {
+            let cell = state.double_buf.back().get(0, 0).unwrap();
+            assert_eq!(cell.ch, 'h');
+            assert!(cell.style.underline, "cell should have underline set");
+            let sgr = cell.style.to_sgr();
+            let sgr_str = String::from_utf8_lossy(&sgr);
+            assert!(
+                sgr_str.contains(";4"),
+                "SGR should contain ;4 for underline, got: {sgr_str}"
+            );
+        });
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn strikethrough_text_emits_sgr9() {
+        teardown();
+        unsafe { init_test_mode(20, 3, std::ptr::null_mut()) };
+
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(1, r#"{"width":20,"height":3}"#));
+        buf.extend(encode_create_node(
+            2,
+            r#"{"width":20,"height":1,"strikethrough":true}"#,
+        ));
+        buf.extend(encode_set_text(2, "hello"));
+        buf.extend(encode_append_child(1, 2));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+        render_frame();
+
+        with_engine(|state| {
+            let cell = state.double_buf.back().get(0, 0).unwrap();
+            assert_eq!(cell.ch, 'h');
+            assert!(
+                cell.style.strikethrough,
+                "cell should have strikethrough set"
+            );
+            let sgr = cell.style.to_sgr();
+            let sgr_str = String::from_utf8_lossy(&sgr);
+            assert!(
+                sgr_str.contains(";9"),
+                "SGR should contain ;9 for strikethrough, got: {sgr_str}"
+            );
+        });
+
+        teardown();
+    }
+
+    #[test]
+    #[serial]
+    fn dim_text_emits_sgr2() {
+        teardown();
+        unsafe { init_test_mode(20, 3, std::ptr::null_mut()) };
+
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(1, r#"{"width":20,"height":3}"#));
+        buf.extend(encode_create_node(
+            2,
+            r#"{"width":20,"height":1,"dim":true}"#,
+        ));
+        buf.extend(encode_set_text(2, "hello"));
+        buf.extend(encode_append_child(1, 2));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+        render_frame();
+
+        with_engine(|state| {
+            let cell = state.double_buf.back().get(0, 0).unwrap();
+            assert_eq!(cell.ch, 'h');
+            assert!(cell.style.dim, "cell should have dim set");
+            let sgr = cell.style.to_sgr();
+            let sgr_str = String::from_utf8_lossy(&sgr);
+            assert!(
+                sgr_str.contains(";2"),
+                "SGR should contain ;2 for dim, got: {sgr_str}"
+            );
+        });
+
+        teardown();
     }
 
     // -- color_to_rgba tests ------------------------------------------------
@@ -2950,7 +3661,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn border_radius_generates_pixel_output() {
+    fn border_radius_in_test_mode_uses_cell_rendering() {
         setup();
         let mut buf = Vec::new();
         buf.extend(encode_create_node(
@@ -2971,19 +3682,53 @@ mod tests {
                 .output
                 .as_ref()
                 .expect("test mode should capture output");
+            // Test mode always uses cell-based rendering, so no Kitty graphics.
             let text = String::from_utf8_lossy(output);
-            // Pixel output should contain Kitty graphics protocol sequences.
             assert!(
-                text.contains("\x1b_G"),
-                "output should contain Kitty graphics APC sequence for border-radius"
+                !text.contains("\x1b_G"),
+                "test mode should use cell-based rendering, not Kitty graphics"
+            );
+            // But cell output should still be produced.
+            assert!(
+                !output.is_empty(),
+                "render_frame should produce cell-based output in test mode"
             );
         });
         teardown();
     }
 
-    // `border_radius_zero_produces_no_pixel_output` removed (issue #156).
-    // With the cell path gone, the pixel renderer always runs.  The test's
-    // premise (no Kitty graphics when borderRadius is 0) no longer applies.
+    #[test]
+    #[serial]
+    fn border_radius_zero_produces_no_pixel_output() {
+        setup();
+        let mut buf = Vec::new();
+        buf.extend(encode_create_node(
+            1,
+            r##"{"width":80,"height":24,"flexDirection":"column"}"##,
+        ));
+        buf.extend(encode_create_node(
+            2,
+            r##"{"width":10,"height":3,"backgroundColor":"#1e293b","borderRadius":0}"##,
+        ));
+        buf.extend(encode_append_child(1, 2));
+        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
+
+        render_frame();
+
+        with_engine(|state| {
+            let output = state
+                .output
+                .as_ref()
+                .expect("test mode should capture output");
+            let text = String::from_utf8_lossy(output);
+            // No Kitty graphics in test mode (cell-based rendering).
+            assert!(
+                !text.contains("\x1b_G"),
+                "output should NOT contain Kitty graphics APC in test mode"
+            );
+        });
+        teardown();
+    }
 
     #[test]
     #[serial]
