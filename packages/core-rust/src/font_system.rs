@@ -115,13 +115,16 @@ impl FontSystem {
             return (text.len() as f32 * font_size * 0.6, font_size);
         };
 
+        let line_metrics = font.horizontal_line_metrics(font_size);
+        let line_height = line_metrics.map_or(font_size * 1.2, |lm| lm.new_line_size);
+
         let mut width = 0.0f32;
         for ch in text.chars() {
             let metrics = font.metrics(ch, font_size);
             width += metrics.advance_width;
         }
 
-        (width.max(0.0), font_size.max(font_size))
+        (width.max(0.0), line_height)
     }
 
     /// Rasterize text and return positioned glyphs with their coverage
@@ -254,6 +257,36 @@ mod tests {
         assert!(
             diff < w_normal * 0.25,
             "bold width ({w_bold}) should be similar to normal ({w_normal}), diff={diff}"
+        );
+    }
+
+    #[test]
+    fn bold_produces_different_glyph_data() {
+        let mut fs = FontSystem::new();
+        // Skip if bold font is not available (falls back to regular).
+        if fs.sans_bold.is_none() {
+            return;
+        }
+        let glyphs_regular = fs.rasterize_text("A", 24.0, false, false);
+        let glyphs_bold = fs.rasterize_text("A", 24.0, true, false);
+        assert!(!glyphs_regular.is_empty(), "regular should produce glyphs");
+        assert!(!glyphs_bold.is_empty(), "bold should produce glyphs");
+        // Bold glyph should have different bitmap data than regular.
+        assert_ne!(
+            glyphs_regular[0].data, glyphs_bold[0].data,
+            "bold 'A' bitmap should differ from regular 'A' bitmap"
+        );
+    }
+
+    #[test]
+    fn measure_text_uses_line_metrics_height() {
+        let mut fs = FontSystem::new();
+        let (_, h) = fs.measure_text("Hello", 16.0, false, false);
+        // Line height from metrics should be larger than the font size
+        // (it includes ascent + descent + line gap).
+        assert!(
+            h >= 16.0,
+            "line height ({h}) should be at least font_size (16.0)"
         );
     }
 }

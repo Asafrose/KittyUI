@@ -146,7 +146,8 @@ const preprocessStyle = (style: Record<string, unknown>, overrideCols?: number, 
       case "border":
       case "borderColor":
       case "boxShadow":
-      case "borderRadius": {
+      case "borderRadius":
+      case "fontSize": {
         result[key] = value;
         break;
       }

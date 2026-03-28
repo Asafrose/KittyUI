@@ -174,6 +174,8 @@ struct NodeVisualStyle {
     box_shadow: Option<BoxShadow>,
     /// Border radius in pixels for rounded corners (rendered via pixel canvas).
     border_radius: f32,
+    /// Explicit font size in pixels for pixel rendering.
+    font_size: Option<f32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -382,6 +384,7 @@ impl pixel_renderer::PaintTree for EngineState {
                     angle_deg: g.angle_deg,
                     stops: g.stops.iter().map(|s| (s.position, s.color)).collect(),
                 }),
+            font_size: style.font_size,
         })
     }
 
@@ -1290,6 +1293,9 @@ fn parse_visual_style_json(json: &[u8]) -> NodeVisualStyle {
     }
     if let Some(br) = json_extract_f32(s, "borderRadius") {
         vs.border_radius = br;
+    }
+    if let Some(fs) = json_extract_f32(s, "fontSize") {
+        vs.font_size = Some(fs);
     }
     // CSS `background` property — supports `linear-gradient(...)` or a plain color.
     if let Some(bg_str) = json_extract_str(s, "background") {

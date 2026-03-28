@@ -61,6 +61,7 @@ export interface CSSStyle {
   flexGrow?: number | undefined;
   flexShrink?: number | undefined;
   flexWrap?: "no-wrap" | "wrap" | "wrap-reverse" | undefined;
+  fontSize?: number | undefined;
   fontStyle?: "normal" | "italic" | undefined;
   fontWeight?: "normal" | "bold" | undefined;
   gap?: DimInput | [DimInput, DimInput] | undefined;
@@ -363,6 +364,9 @@ export const normalizeStyle = (css: CSSStyle): { node: NodeStyle; text: TextStyl
   text.fg = resolveColor(css.color);
   text.bg = resolveColor(css.backgroundColor);
   text.underlineColor = resolveColor(css.underlineColor);
+  if (css.fontSize !== undefined) {
+    (node as Record<string, unknown>).fontSize = css.fontSize;
+  }
   if (css.fontWeight === "bold") {
     text.bold = true;
   }
