@@ -28,7 +28,7 @@
 
 use crate::ansi::Color;
 use crate::font_system::FontSystem;
-use crate::image;
+use crate::image::{self, ImageData};
 use crate::pixel_canvas::PixelCanvas;
 
 // ---------------------------------------------------------------------------
@@ -154,10 +154,10 @@ pub struct PixelRenderer {
     cols: u32,
     /// Terminal height in cells.
     rows: u32,
-    /// Kitty image ID for the current frame.
-    image_id: u32,
-    /// Hash of previous frame's pixel data (for skip-if-unchanged).
-    prev_frame_hash: u64,
+    /// Hash of each row-tile from the previous frame.
+    prev_row_hashes: Vec<u64>,
+    /// Kitty image IDs for each row-tile.
+    row_image_ids: Vec<u32>,
 }
 
 impl PixelRenderer {
@@ -172,8 +172,8 @@ impl PixelRenderer {
             cell_h,
             cols,
             rows,
-            image_id: 0,
-            prev_frame_hash: 0,
+            prev_row_hashes: Vec::new(),
+            row_image_ids: Vec::new(),
         }
     }
 
@@ -183,6 +183,8 @@ impl PixelRenderer {
             self.cols = cols;
             self.rows = rows;
             self.canvas = PixelCanvas::new(cols * self.cell_w, rows * self.cell_h);
+            self.prev_row_hashes.clear();
+            self.row_image_ids.clear();
         }
     }
 
@@ -197,7 +199,8 @@ impl PixelRenderer {
     }
 
     /// Paint the entire frame from a [`PaintTree`].  Returns the Kitty
-    /// protocol bytes to write to the terminal.
+    /// protocol bytes to write to the terminal -- only the row-tiles that
+    /// actually changed since the previous frame.
     pub fn paint_frame(&mut self, tree: &dyn PaintTree) -> Vec<u8> {
         // Clear canvas (transparent).
         self.canvas.fill([0, 0, 0, 0]);
@@ -207,32 +210,8 @@ impl PixelRenderer {
             self.paint_node(tree, root_id, 0.0, 0.0, None);
         }
 
-        // Quick hash of pixel data to skip encoding if unchanged.
-        let hash = Self::hash_canvas(&self.canvas);
-        if hash == self.prev_frame_hash && self.image_id > 0 {
-            // Frame unchanged — skip re-encoding.
-            return Vec::new();
-        }
-        self.prev_frame_hash = hash;
-
-        // Encode as Kitty image.
-        self.encode_frame()
-    }
-
-    /// Fast hash of canvas pixel data for dirty detection.
-    fn hash_canvas(canvas: &PixelCanvas) -> u64 {
-        // FNV-1a inspired simple hash — fast enough for frame comparison.
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        // Sample every 64th byte for speed (full hash of 5MB would be slow).
-        let data = &canvas.data;
-        let step = (data.len() / 4096).max(1);
-        let mut i = 0;
-        while i < data.len() {
-            h ^= data[i] as u64;
-            h = h.wrapping_mul(0x0100_0000_01b3);
-            i += step;
-        }
-        h
+        // Encode only the dirty row-tiles.
+        self.encode_tiles()
     }
 
     /// Recursively paint a node and its children.
@@ -506,26 +485,64 @@ impl PixelRenderer {
         }
     }
 
-    /// Encode the canvas as a Kitty protocol frame.
-    fn encode_frame(&mut self) -> Vec<u8> {
+    /// Encode only the row-tiles that changed since the previous frame.
+    ///
+    /// Each "tile" is one cell-row of the canvas (`full_width x cell_h`
+    /// pixels).  We hash each row's pixel data and skip rows that are
+    /// identical to the previous frame, dramatically reducing the amount
+    /// of data sent over the wire.
+    fn encode_tiles(&mut self) -> Vec<u8> {
         let mut output = Vec::new();
+        let tile_h = self.cell_h;
+        let tile_w = self.canvas.width;
+        let num_rows = self.rows as usize;
 
-        // Delete previous frame's image.
-        if self.image_id > 0 {
-            let delete = image::encode_delete(image::DeleteTarget::ById(self.image_id));
+        // On first frame (or after resize), reset tracking vectors and
+        // delete any stale images the terminal may still hold.
+        if self.prev_row_hashes.len() != num_rows {
+            self.prev_row_hashes = vec![0u64; num_rows];
+            self.row_image_ids = vec![0u32; num_rows];
+            let delete = image::encode_delete(image::DeleteTarget::All);
             output.extend_from_slice(&delete);
         }
 
-        // Transmit new image.
-        self.image_id = image::ImageCache::next_id();
-        if let Ok(img_data) = self.canvas.to_image_data() {
-            if let Ok(transmit) = image::encode_transmit(&img_data, self.image_id) {
-                // Move cursor to top-left.
-                output.extend_from_slice(b"\x1b[1;1H");
-                output.extend_from_slice(&transmit);
-                // Display at z=-1 (behind any cell-based text if hybrid mode).
-                let display = image::encode_display_z(self.image_id, None, -1);
-                output.extend_from_slice(&display);
+        let stride = tile_w as usize * 4; // bytes per pixel row
+
+        for row in 0..num_rows {
+            let y_start = row * tile_h as usize;
+            let y_end = ((row + 1) * tile_h as usize).min(self.canvas.height as usize);
+            let byte_start = y_start * stride;
+            let byte_end = y_end * stride;
+            let row_bytes = &self.canvas.data[byte_start..byte_end];
+
+            let hash = fnv_hash(row_bytes);
+
+            if hash == self.prev_row_hashes[row] && self.row_image_ids[row] > 0 {
+                continue; // Row unchanged — skip.
+            }
+            self.prev_row_hashes[row] = hash;
+
+            // Delete the old tile image if one exists.
+            let old_id = self.row_image_ids[row];
+            if old_id > 0 {
+                let delete = image::encode_delete(image::DeleteTarget::ById(old_id));
+                output.extend_from_slice(&delete);
+            }
+
+            // Allocate a new image ID and transmit the tile.
+            let new_id = image::ImageCache::next_id();
+            self.row_image_ids[row] = new_id;
+
+            let tile_height = (y_end - y_start) as u32;
+            if let Ok(img_data) = ImageData::from_rgba(row_bytes.to_vec(), tile_w, tile_height) {
+                if let Ok(transmit) = image::encode_transmit(&img_data, new_id) {
+                    // Position cursor at this row (1-based).
+                    let cursor = format!("\x1b[{};1H", row + 1);
+                    output.extend_from_slice(cursor.as_bytes());
+                    output.extend_from_slice(&transmit);
+                    let display = image::encode_display_z(new_id, None, -1);
+                    output.extend_from_slice(&display);
+                }
             }
         }
 
@@ -536,6 +553,16 @@ impl PixelRenderer {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// FNV-1a hash of a byte slice.  Used for fast row-tile dirty detection.
+fn fnv_hash(data: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in data {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    h
+}
 
 /// Convert a [`Color`] to an RGBA quad.
 fn color_to_rgba(color: &Color, alpha: u8) -> [u8; 4] {
@@ -695,8 +722,8 @@ mod tests {
         let mut r = PixelRenderer::new(10, 5, 8, 16);
         let tree = TestTree::new();
         let output = r.paint_frame(&tree);
-        // No root node means no image to encode -- the canvas is empty but
-        // encode_frame still generates Kitty commands for the blank frame.
+        // No root node means the canvas is all-transparent; encode_tiles
+        // still generates Kitty commands for the blank frame on first call.
         // We mainly verify it does not panic.
         assert!(!output.is_empty() || tree.root.is_none());
     }
@@ -739,14 +766,14 @@ mod tests {
         assert!(!output.is_empty(), "output should not be empty");
     }
 
-    // -- encode_frame produces Kitty protocol bytes -----------------------
+    // -- encode_tiles produces Kitty protocol bytes -----------------------
 
     #[test]
-    fn encode_frame_contains_kitty_protocol_sequences() {
+    fn encode_tiles_contains_kitty_protocol_sequences() {
         let mut r = PixelRenderer::new(4, 2, 8, 16);
         // Fill some pixels so there is data to encode.
         r.canvas.fill([128, 64, 32, 255]);
-        let output = r.encode_frame();
+        let output = r.encode_tiles();
         let text = String::from_utf8_lossy(&output);
 
         // Should contain Kitty APC start.
@@ -766,6 +793,94 @@ mod tests {
         );
         // Should contain z-index.
         assert!(text.contains("z=-1"), "output should contain z=-1");
+    }
+
+    // -- tile diffing: unchanged canvas produces no output -----------------
+
+    #[test]
+    fn encode_tiles_unchanged_canvas_produces_no_output() {
+        let mut r = PixelRenderer::new(4, 3, 8, 16);
+        r.canvas.fill([10, 20, 30, 255]);
+
+        // First call transmits all tiles.
+        let first = r.encode_tiles();
+        assert!(!first.is_empty(), "first frame should transmit tiles");
+
+        // Second call with same canvas should produce nothing.
+        let second = r.encode_tiles();
+        assert!(
+            second.is_empty(),
+            "unchanged canvas should produce no output"
+        );
+    }
+
+    // -- tile diffing: changing one pixel only retransmits that row --------
+
+    #[test]
+    fn encode_tiles_single_pixel_change_retransmits_one_row() {
+        let mut r = PixelRenderer::new(4, 3, 8, 16);
+        r.canvas.fill([10, 20, 30, 255]);
+
+        // Transmit all tiles initially.
+        let _ = r.encode_tiles();
+
+        // Modify a single pixel in row 1 (y = cell_h).
+        let y = r.cell_h;
+        r.canvas.set_pixel(0, y, [255, 0, 0, 255]);
+
+        let output = r.encode_tiles();
+        let text = String::from_utf8_lossy(&output);
+
+        // Should contain exactly one transmit (the dirty row).
+        let transmit_count = text.matches("a=t").count();
+        assert_eq!(
+            transmit_count, 1,
+            "only one row tile should be retransmitted, got {transmit_count}"
+        );
+
+        // The cursor should position at row 2 (1-based).
+        assert!(
+            text.contains("\x1b[2;1H"),
+            "cursor should be positioned at row 2"
+        );
+    }
+
+    // -- tile diffing: resize forces full retransmit ----------------------
+
+    #[test]
+    fn encode_tiles_after_resize_retransmits_all() {
+        let mut r = PixelRenderer::new(4, 3, 8, 16);
+        r.canvas.fill([10, 20, 30, 255]);
+        let _ = r.encode_tiles();
+
+        // Resize clears the hash/id vectors.
+        r.resize(6, 4);
+        r.canvas.fill([10, 20, 30, 255]);
+        let output = r.encode_tiles();
+        let text = String::from_utf8_lossy(&output);
+
+        // All 4 rows should be transmitted.
+        let transmit_count = text.matches("a=t").count();
+        assert_eq!(
+            transmit_count, 4,
+            "after resize all rows should be retransmitted, got {transmit_count}"
+        );
+    }
+
+    // -- tile diffing: first frame transmits all rows ---------------------
+
+    #[test]
+    fn encode_tiles_first_frame_transmits_all_rows() {
+        let mut r = PixelRenderer::new(4, 5, 8, 16);
+        r.canvas.fill([50, 50, 50, 255]);
+        let output = r.encode_tiles();
+        let text = String::from_utf8_lossy(&output);
+
+        let transmit_count = text.matches("a=t").count();
+        assert_eq!(
+            transmit_count, 5,
+            "first frame should transmit all 5 rows, got {transmit_count}"
+        );
     }
 
     // -- paint_frame with text content ------------------------------------
