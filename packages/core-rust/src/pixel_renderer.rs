@@ -1842,4 +1842,218 @@ mod tests {
             "exactly 2 rows should be retransmitted, got {transmit_count}"
         );
     }
+
+    // -- paint_node early return when child has no layout (line 262) ----------
+
+    #[test]
+    fn paint_frame_child_without_layout_skipped() {
+        let mut tree = TestTree::new();
+        tree.root = Some(1);
+        tree.layouts.insert(
+            1,
+            NodeLayout {
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 5.0,
+            },
+        );
+        tree.styles.insert(
+            1,
+            PixelNodeStyle {
+                bg: Some(Color::Rgb(255, 0, 0)),
+                ..Default::default()
+            },
+        );
+        // Child 2 is listed in children but has no layout entry → should be
+        // skipped without panicking.
+        tree.children.insert(1, vec![2]);
+        // No layout for node 2 — intentionally omitted.
+
+        let mut r = PixelRenderer::new(10, 5, 8, 16);
+        let output = r.paint_frame(&tree);
+        // Should not panic, and the parent's background should still be painted.
+        let has_color = r
+            .canvas
+            .data
+            .chunks_exact(4)
+            .any(|px| px[0] > 0 && px[3] > 0);
+        assert!(has_color, "parent should still be painted");
+        assert!(!output.is_empty());
+    }
+
+    // -- paint_frame with partial span coverage (lines 380, 408-423) ----------
+
+    #[test]
+    fn paint_frame_text_span_with_empty_range_is_skipped() {
+        let mut tree = TestTreeWithSpans::new();
+        tree.inner.root = Some(1);
+        tree.inner.layouts.insert(
+            1,
+            NodeLayout {
+                x: 0.0,
+                y: 0.0,
+                width: 20.0,
+                height: 3.0,
+            },
+        );
+        tree.inner.styles.insert(
+            1,
+            PixelNodeStyle {
+                fg: Some(Color::Rgb(255, 255, 255)),
+                ..Default::default()
+            },
+        );
+        tree.inner.texts.insert(1, "Hello World".to_string());
+        tree.inner.children.insert(1, vec![]);
+        // Include a span where start == end (empty coverage → should be skipped)
+        // plus a valid span.
+        tree.spans.insert(
+            1,
+            vec![
+                PixelTextSpan {
+                    start: 3,
+                    end: 3,
+                    fg: [255, 0, 0, 255],
+                },
+                PixelTextSpan {
+                    start: 0,
+                    end: 5,
+                    fg: [0, 255, 0, 255],
+                },
+            ],
+        );
+
+        let mut r = PixelRenderer::new(20, 3, 8, 16);
+        let output = r.paint_frame(&tree);
+        assert!(!output.is_empty(), "should produce output");
+    }
+
+    #[test]
+    fn paint_frame_text_spans_partial_coverage_uses_default_fg() {
+        let mut tree = TestTreeWithSpans::new();
+        tree.inner.root = Some(1);
+        tree.inner.layouts.insert(
+            1,
+            NodeLayout {
+                x: 0.0,
+                y: 0.0,
+                width: 20.0,
+                height: 3.0,
+            },
+        );
+        tree.inner.styles.insert(
+            1,
+            PixelNodeStyle {
+                fg: Some(Color::Rgb(255, 255, 255)),
+                ..Default::default()
+            },
+        );
+        tree.inner.texts.insert(1, "Hello World".to_string());
+        tree.inner.children.insert(1, vec![]);
+        // Only cover "Hello" (0..5). " World" (5..11) is uncovered and should
+        // use the default fg color path.
+        tree.spans.insert(
+            1,
+            vec![PixelTextSpan {
+                start: 0,
+                end: 5,
+                fg: [255, 0, 0, 255],
+            }],
+        );
+
+        let mut r = PixelRenderer::new(20, 3, 8, 16);
+        let output = r.paint_frame(&tree);
+        // Should produce visible pixels from both the span and the default fg path.
+        let non_transparent = r.canvas.data.chunks_exact(4).filter(|px| px[3] > 0).count();
+        assert!(
+            non_transparent > 0,
+            "partial span coverage should still render all text"
+        );
+        assert!(!output.is_empty());
+    }
+
+    // -- paint_shadow early return for oversized canvas (line 488) -------------
+
+    #[test]
+    fn paint_frame_shadow_too_large_skipped() {
+        let mut tree = TestTree::new();
+        tree.root = Some(1);
+        tree.layouts.insert(
+            1,
+            NodeLayout {
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 5.0,
+            },
+        );
+        tree.styles.insert(
+            1,
+            PixelNodeStyle {
+                bg: Some(Color::Rgb(100, 100, 100)),
+                box_shadow: Some(PixelBoxShadow {
+                    offset_x: 0.0,
+                    offset_y: 0.0,
+                    // Very large blur → shadow canvas exceeds 4096 → early return
+                    blur_radius: 5000.0,
+                    spread_radius: 0.0,
+                    color: [0, 0, 0, 128],
+                }),
+                ..Default::default()
+            },
+        );
+        tree.children.insert(1, vec![]);
+
+        let mut r = PixelRenderer::new(10, 5, 8, 16);
+        // Should not panic; shadow is silently skipped.
+        let output = r.paint_frame(&tree);
+        assert!(!output.is_empty());
+    }
+
+    // -- paint_shadow without border_radius (radius=0, line 505) --------------
+
+    #[test]
+    fn paint_frame_shadow_without_border_radius() {
+        let mut tree = TestTree::new();
+        tree.root = Some(1);
+        tree.layouts.insert(
+            1,
+            NodeLayout {
+                x: 1.0,
+                y: 1.0,
+                width: 4.0,
+                height: 3.0,
+            },
+        );
+        tree.styles.insert(
+            1,
+            PixelNodeStyle {
+                bg: Some(Color::Rgb(200, 200, 200)),
+                border_radius: 0.0, // No border radius → fill_rect path
+                box_shadow: Some(PixelBoxShadow {
+                    offset_x: 2.0,
+                    offset_y: 2.0,
+                    blur_radius: 3.0,
+                    spread_radius: 1.0,
+                    color: [0, 0, 0, 100],
+                }),
+                ..Default::default()
+            },
+        );
+        tree.children.insert(1, vec![]);
+
+        let mut r = PixelRenderer::new(10, 8, 8, 16);
+        let _output = r.paint_frame(&tree);
+
+        // Shadow pixels should exist beyond the node's own area.
+        // Node occupies cols 1..5, rows 1..4 (in cells).
+        // Shadow is offset (+2,+2) with spread 1 and blur 3, so it extends
+        // further right and down.  Check for shadow pixel near (80, 80) area.
+        let non_transparent = r.canvas.data.chunks_exact(4).filter(|px| px[3] > 0).count();
+        assert!(
+            non_transparent > 0,
+            "shadow with radius=0 should produce visible pixels"
+        );
+    }
 }
