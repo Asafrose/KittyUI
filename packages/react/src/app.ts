@@ -149,6 +149,9 @@ export const createApp = (
   const bridge = new Bridge();
   const initResult = bridge.init();
 
+  // Auto-detect rendering mode: use pixel rendering on Kitty-capable terminals.
+  bridge.setRenderMode("auto");
+
   // Enable mouse tracking (SGR mode with move events)
   process.stdout.write(MOUSE_ENABLE);
 
