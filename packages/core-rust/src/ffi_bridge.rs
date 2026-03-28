@@ -2063,6 +2063,12 @@ pub extern "C" fn render_frame() {
                     pr.resize(state.cols as u32, state.rows as u32);
                     let output = pr.paint_frame(state);
                     state.write_output(&output);
+
+                    // Auto-save screenshot if KITTYUI_SCREENSHOT env var is set.
+                    if let Ok(path) = std::env::var("KITTYUI_SCREENSHOT") {
+                        let _ = pr.save_screenshot(&path);
+                    }
+
                     state.pixel_renderer = Some(pr);
                 }
             } else {
