@@ -2590,6 +2590,36 @@ pub unsafe extern "C" fn get_all_layouts(out_ptr: *mut f32, max_nodes: u32) -> u
 }
 
 // ---------------------------------------------------------------------------
+// Screenshot
+// ---------------------------------------------------------------------------
+
+/// Save a screenshot of the current pixel-rendered frame to a PNG file.
+/// The path is passed as a pointer + length (UTF-8 string).
+///
+/// Returns 0 on success, -1 on save error, -2 if pixel renderer is not active.
+///
+/// # Safety
+///
+/// `path_ptr` must point to a valid UTF-8 byte slice of `path_len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn save_screenshot(path_ptr: *const u8, path_len: u32) -> i32 {
+    let Ok(path) = std::str::from_utf8(std::slice::from_raw_parts(path_ptr, path_len as usize))
+    else {
+        return -1;
+    };
+    with_engine(|state| {
+        if let Some(ref pr) = state.pixel_renderer {
+            match pr.save_screenshot(path) {
+                Ok(()) => 0,
+                Err(_) => -1,
+            }
+        } else {
+            -2
+        }
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
