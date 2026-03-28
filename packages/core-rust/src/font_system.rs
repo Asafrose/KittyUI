@@ -169,16 +169,20 @@ impl FontSystem {
             x += metrics.advance_width;
         }
 
-        // Tighten glyph positioning: shift all glyphs up to remove the gap
-        // between the font's typographic ascent and the actual top of the
-        // tallest glyph.  Without this, text sits too low in its container
-        // (e.g. avatar initials at the bottom of circles instead of centred).
+        // Centre glyphs vertically within the line height.
+        // Without this, text sits at the typographic baseline position which
+        // leaves a gap at the top and descender space at the bottom.
         if !glyphs.is_empty() {
             let min_y = glyphs.iter().map(|g| g.y).fold(f32::MAX, f32::min);
-            if min_y > 0.0 {
-                for g in &mut glyphs {
-                    g.y -= min_y;
-                }
+            let max_y = glyphs
+                .iter()
+                .map(|g| g.y + g.height as f32)
+                .fold(0.0f32, f32::max);
+            let text_height = max_y - min_y;
+            let line_height = line_metrics.map_or(font_size, |lm| lm.new_line_size);
+            let offset = (line_height - text_height) / 2.0 - min_y;
+            for g in &mut glyphs {
+                g.y += offset;
             }
         }
 
@@ -413,15 +417,24 @@ mod tests {
     // -- rasterize_text glyph positions are tightened -----------------------
 
     #[test]
-    fn rasterize_text_glyphs_start_near_zero_y() {
+    fn rasterize_text_glyphs_centered_in_line_height() {
         let mut fs = FontSystem::new();
         let glyphs = fs.rasterize_text("Ag", 24.0, false, false);
         assert!(!glyphs.is_empty());
         let min_y = glyphs.iter().map(|g| g.y).fold(f32::MAX, f32::min);
-        // After tightening, the minimum y should be 0 or very close
+        let max_y = glyphs
+            .iter()
+            .map(|g| g.y + g.height as f32)
+            .fold(0.0f32, f32::max);
+        // Glyphs should be centered: roughly equal space above and below
+        // min_y > 0 means there's top padding, max_y < line_height means bottom padding
         assert!(
-            min_y <= 1.0,
-            "after tightening, min_y should be near 0, got {min_y}"
+            min_y >= 0.0,
+            "glyphs should have non-negative y, got {min_y}"
+        );
+        assert!(
+            max_y <= 30.0, // line height for 24px font is ~28-30px
+            "glyphs should fit within line height, got max_y={max_y}"
         );
     }
 
