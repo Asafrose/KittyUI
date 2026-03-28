@@ -174,11 +174,23 @@ pub fn encode_transmit(data: &ImageData, image_id: u32) -> io::Result<Vec<u8>> {
 /// Build a Kitty graphics protocol display/placement command.
 ///
 /// Places an already-transmitted image at the current cursor position.
+/// `z_index` controls layering: negative values render behind text (default 0 = above text).
 #[must_use]
 pub fn encode_display(image_id: u32, placement_id: Option<u32>) -> Vec<u8> {
+    encode_display_z(image_id, placement_id, 0)
+}
+
+/// Places an image with explicit z-index. Use z < 0 to render behind text.
+#[must_use]
+pub fn encode_display_z(image_id: u32, placement_id: Option<u32>, z_index: i32) -> Vec<u8> {
+    let z_part = if z_index != 0 {
+        format!(",z={z_index}")
+    } else {
+        String::new()
+    };
     match placement_id {
-        Some(pid) => format!("\x1b_Ga=p,i={image_id},p={pid};\x1b\\").into_bytes(),
-        None => format!("\x1b_Ga=p,i={image_id};\x1b\\").into_bytes(),
+        Some(pid) => format!("\x1b_Ga=p,i={image_id},p={pid}{z_part};\x1b\\").into_bytes(),
+        None => format!("\x1b_Ga=p,i={image_id}{z_part};\x1b\\").into_bytes(),
     }
 }
 
