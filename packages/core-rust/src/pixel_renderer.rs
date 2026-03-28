@@ -78,6 +78,8 @@ pub struct PixelNodeStyle {
     pub box_shadow: Option<PixelBoxShadow>,
     /// Linear gradient background (takes precedence over `bg`).
     pub gradient: Option<PixelGradient>,
+    /// Explicit font size in pixels (overrides `cell_h` default).
+    pub font_size: Option<f32>,
 }
 
 /// Box shadow properties for pixel rendering.
@@ -326,7 +328,7 @@ impl PixelRenderer {
                     .fg
                     .as_ref()
                     .map_or([255, 255, 255, alpha], |c| color_to_rgba(c, alpha));
-                let font_size = self.cell_h as f32;
+                let font_size = style.font_size.unwrap_or(self.cell_h as f32);
 
                 let spans = tree.text_spans(node_id);
                 if spans.is_empty() {

@@ -159,8 +159,13 @@ export const createApp = (
   // Enable mouse tracking (SGR mode with move events)
   process.stdout.write(MOUSE_ENABLE);
 
-  // Query terminal pixel dimensions (fallback when ioctl fails, e.g. tmux/screen)
-  process.stdout.write("\x1b[14t\x1b[18t");
+  // Query terminal pixel dimensions (fallback when ioctl fails, e.g. tmux/screen).
+  // Only needed in cell rendering mode — the pixel renderer uses fontdue and
+  // doesn't need cell pixel dimensions.  Sending these queries in pixel mode
+  // causes the terminal response to leak into rendered text as CSI garbage.
+  if (options.renderMode !== "pixel") {
+    process.stdout.write("\x1b[14t\x1b[18t");
+  }
 
   // Set viewport to actual terminal size
   const termCols = process.stdout.columns || DEFAULT_COLS;

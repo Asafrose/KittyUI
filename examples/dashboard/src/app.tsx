@@ -77,7 +77,7 @@ function Header({ active }: { active: Tab }) {
         gap: 3,
       }}
     >
-      <Text style={{ color: t.foreground, fontWeight: "bold" }}>
+      <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 20 }}>
         {"Dashboard"}
       </Text>
       <Box style={{ flexDirection: "row", gap: 2 }}>
@@ -99,6 +99,7 @@ function Header({ active }: { active: Tab }) {
                   color: isActive ? t.foreground : t.mutedFg,
                   fontWeight: isActive ? "bold" : "normal",
                   textDecoration: isActive ? "underline" : "none",
+                  fontSize: 14,
                 }}
               >
                 {tab}
@@ -146,11 +147,11 @@ function MetricCard({
   return (
     <Box style={{ ...cardStyle, flexGrow: 1, minWidth: 18, height: 6, gap: 0 }}>
       <Box style={{ flexDirection: "row", justifyContent: "space-between" }}>
-        <Text style={{ color: t.mutedFg }}>{title}</Text>
-        <Text style={{ color: t.mutedFg }}>{icon}</Text>
+        <Text style={{ color: t.mutedFg, fontSize: 12 }}>{title}</Text>
+        <Text style={{ color: t.mutedFg, fontSize: 12 }}>{icon}</Text>
       </Box>
-      <Text style={{ color: t.foreground, fontWeight: "bold" }}>{value}</Text>
-      <Text style={{ color: t.zinc500 }}>{description}</Text>
+      <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 20 }}>{value}</Text>
+      <Text style={{ color: t.zinc500, fontSize: 10 }}>{description}</Text>
     </Box>
   );
 }
@@ -180,7 +181,7 @@ function RevenueChartCard() {
 
   return (
     <Box style={{ ...cardStyle, flexGrow: 2, gap: 1 }}>
-      <Text style={{ color: t.foreground, fontWeight: "bold" }}>{"Overview"}</Text>
+      <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 24 }}>{"Overview"}</Text>
 
       {/* Chart area -- bars rendered via backgroundColor + height */}
       <Box style={{ flexDirection: "row", alignItems: "end", gap: 1, height: barMaxHeight }}>
@@ -212,7 +213,7 @@ function RevenueChartCard() {
       <Box style={{ flexDirection: "row", gap: 1 }}>
         {MONTHLY_REVENUE.map((m) => (
           <Box key={m.month} style={{ flexGrow: 1, width: 4 }}>
-            <Text style={{ color: t.mutedFg }}>{m.month}</Text>
+            <Text style={{ color: t.mutedFg, fontSize: 10 }}>{m.month}</Text>
           </Box>
         ))}
       </Box>
@@ -236,7 +237,7 @@ function Avatar({ initials, color }: { initials: string; color: string }) {
         alignItems: "center",
       }}
     >
-      <Text style={{ color: "#fafafa", fontWeight: "bold" }}>{initials}</Text>
+      <Text style={{ color: "#fafafa", fontWeight: "bold", fontSize: 12 }}>{initials}</Text>
     </Box>
   );
 }
@@ -273,10 +274,10 @@ function SaleRow({ sale }: { sale: Sale }) {
     >
       <Avatar initials={sale.initials} color={avatarColor} />
       <Box style={{ flexDirection: "column", flexGrow: 1 }}>
-        <Text style={{ color: t.foreground }}>{sale.name}</Text>
-        <Text style={{ color: t.mutedFg }}>{sale.email}</Text>
+        <Text style={{ color: t.foreground, fontSize: 14 }}>{sale.name}</Text>
+        <Text style={{ color: t.mutedFg, fontSize: 10 }}>{sale.email}</Text>
       </Box>
-      <Text style={{ color: t.foreground, fontWeight: "bold" }}>{sale.amount}</Text>
+      <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 14 }}>{sale.amount}</Text>
     </Box>
   );
 }
@@ -284,8 +285,8 @@ function SaleRow({ sale }: { sale: Sale }) {
 function RecentSalesCard() {
   return (
     <Box style={{ ...cardStyle, flexGrow: 1, gap: 1, padding: [2, 3] as [number, number] }}>
-      <Text style={{ color: t.foreground, fontWeight: "bold" }}>{"Recent Sales"}</Text>
-      <Text style={{ color: t.zinc500 }}>
+      <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 24 }}>{"Recent Sales"}</Text>
+      <Text style={{ color: t.zinc500, fontSize: 10 }}>
         {"You made 265 sales this month."}
       </Text>
       {RECENT_SALES.map((sale) => (
@@ -354,7 +355,7 @@ function Footer() {
         gap: 2,
       }}
     >
-      <Text style={{ color: t.mutedFg }}>
+      <Text style={{ color: t.mutedFg, fontSize: 10 }}>
         {"<-/-> navigate tabs   q quit"}
       </Text>
       <Box style={{ flexGrow: 1 }} />
