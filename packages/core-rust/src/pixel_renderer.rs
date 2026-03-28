@@ -346,10 +346,9 @@ impl PixelRenderer {
                     .map_or([255, 255, 255, alpha], |c| color_to_rgba(c, alpha));
                 let font_size = style.font_size.unwrap_or(self.cell_h as f32);
 
-                // Vertically centre text within the node's pixel height.
-                let text_height = font_size;
-                let vertical_offset = (px_h - text_height).max(0.0) / 2.0;
-                let text_y = px_y + vertical_offset;
+                // Text y position: use the Taffy-computed position directly.
+                // Taffy handles vertical centering via flexbox (justifyContent/alignItems).
+                let text_y = px_y;
 
                 let spans = tree.text_spans(node_id);
                 if spans.is_empty() {

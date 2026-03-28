@@ -340,6 +340,106 @@ function OverviewPage() {
 }
 
 // ---------------------------------------------------------------------------
+// Analytics page
+// ---------------------------------------------------------------------------
+
+function AnalyticsPage() {
+  return (
+    <Box style={{ flexDirection: "column", flexGrow: 1, padding: [2, 3], gap: 2 }}>
+      <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 20 }}>
+        {"Analytics"}
+      </Text>
+      <Box style={{ flexDirection: "row", gap: 2 }}>
+        <Box style={{ ...cardStyle, flexGrow: 1 }}>
+          <Text style={{ color: t.mutedFg, fontSize: 12 }}>{"Page Views"}</Text>
+          <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 20 }}>{"128,430"}</Text>
+          <Text style={{ color: t.zinc500, fontSize: 10 }}>{"Last 30 days"}</Text>
+        </Box>
+        <Box style={{ ...cardStyle, flexGrow: 1 }}>
+          <Text style={{ color: t.mutedFg, fontSize: 12 }}>{"Unique Visitors"}</Text>
+          <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 20 }}>{"42,891"}</Text>
+          <Text style={{ color: t.zinc500, fontSize: 10 }}>{"Last 30 days"}</Text>
+        </Box>
+        <Box style={{ ...cardStyle, flexGrow: 1 }}>
+          <Text style={{ color: t.mutedFg, fontSize: 12 }}>{"Bounce Rate"}</Text>
+          <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 20 }}>{"24.3%"}</Text>
+          <Text style={{ color: t.zinc500, fontSize: 10 }}>{"Down 5.2%"}</Text>
+        </Box>
+      </Box>
+      <Box style={{ ...cardStyle, flexGrow: 1 }}>
+        <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 14 }}>{"Top Pages"}</Text>
+        <Box style={{ flexDirection: "column", marginTop: 1, gap: 1 }}>
+          <Box style={{ flexDirection: "row" }}>
+            <Box style={{ width: 30 }}><Text style={{ color: t.foreground, fontSize: 12 }}>{"/dashboard"}</Text></Box>
+            <Text style={{ color: t.mutedFg, fontSize: 12 }}>{"12,483 views"}</Text>
+          </Box>
+          <Box style={{ flexDirection: "row" }}>
+            <Box style={{ width: 30 }}><Text style={{ color: t.foreground, fontSize: 12 }}>{"/settings"}</Text></Box>
+            <Text style={{ color: t.mutedFg, fontSize: 12 }}>{"8,291 views"}</Text>
+          </Box>
+          <Box style={{ flexDirection: "row" }}>
+            <Box style={{ width: 30 }}><Text style={{ color: t.foreground, fontSize: 12 }}>{"/api/docs"}</Text></Box>
+            <Text style={{ color: t.mutedFg, fontSize: 12 }}>{"6,104 views"}</Text>
+          </Box>
+          <Box style={{ flexDirection: "row" }}>
+            <Box style={{ width: 30 }}><Text style={{ color: t.foreground, fontSize: 12 }}>{"/billing"}</Text></Box>
+            <Text style={{ color: t.mutedFg, fontSize: 12 }}>{"4,872 views"}</Text>
+          </Box>
+        </Box>
+      </Box>
+    </Box>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Reports page
+// ---------------------------------------------------------------------------
+
+function ReportsPage() {
+  return (
+    <Box style={{ flexDirection: "column", flexGrow: 1, padding: [2, 3], gap: 2 }}>
+      <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 20 }}>
+        {"Reports"}
+      </Text>
+      <Box style={{ ...cardStyle }}>
+        <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 14 }}>{"System Status"}</Text>
+        <Box style={{ flexDirection: "column", marginTop: 1, gap: 1 }}>
+          <Box style={{ flexDirection: "row" }}>
+            <Box style={{ width: 24 }}><Text style={{ color: t.foreground, fontSize: 12 }}>{"API Gateway"}</Text></Box>
+            <Text style={{ color: "#22c55e", fontSize: 12 }}>{"Operational"}</Text>
+          </Box>
+          <Box style={{ flexDirection: "row" }}>
+            <Box style={{ width: 24 }}><Text style={{ color: t.foreground, fontSize: 12 }}>{"Database"}</Text></Box>
+            <Text style={{ color: "#22c55e", fontSize: 12 }}>{"Operational"}</Text>
+          </Box>
+          <Box style={{ flexDirection: "row" }}>
+            <Box style={{ width: 24 }}><Text style={{ color: t.foreground, fontSize: 12 }}>{"Payment Service"}</Text></Box>
+            <Text style={{ color: "#eab308", fontSize: 12 }}>{"Degraded"}</Text>
+          </Box>
+          <Box style={{ flexDirection: "row" }}>
+            <Box style={{ width: 24 }}><Text style={{ color: t.foreground, fontSize: 12 }}>{"CDN"}</Text></Box>
+            <Text style={{ color: "#22c55e", fontSize: 12 }}>{"Operational"}</Text>
+          </Box>
+        </Box>
+      </Box>
+      <Box style={{ ...cardStyle }}>
+        <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 14 }}>{"Recent Incidents"}</Text>
+        <Box style={{ flexDirection: "column", marginTop: 1, gap: 1 }}>
+          <Box style={{ flexDirection: "column" }}>
+            <Text style={{ color: t.foreground, fontSize: 12 }}>{"Payment processing delay"}</Text>
+            <Text style={{ color: t.zinc500, fontSize: 10 }}>{"Mar 28, 2026 - Resolved in 45 minutes"}</Text>
+          </Box>
+          <Box style={{ flexDirection: "column" }}>
+            <Text style={{ color: t.foreground, fontSize: 12 }}>{"CDN cache invalidation issue"}</Text>
+            <Text style={{ color: t.zinc500, fontSize: 10 }}>{"Mar 25, 2026 - Resolved in 12 minutes"}</Text>
+          </Box>
+        </Box>
+      </Box>
+    </Box>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Footer
 // ---------------------------------------------------------------------------
 
@@ -396,7 +496,9 @@ export function App() {
     >
       <Header active={activeTab} />
       <Separator />
-      <OverviewPage />
+      {activeTab === "Overview" && <OverviewPage />}
+      {activeTab === "Analytics" && <AnalyticsPage />}
+      {activeTab === "Reports" && <ReportsPage />}
       <Footer />
     </Box>
   );
