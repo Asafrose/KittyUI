@@ -21,7 +21,7 @@ import type { CSSStyle, KeyboardEvent as KittyKeyboardEvent } from "@kittyui/cor
 
 const t = {
   bg: "#09090b",          // zinc-950
-  card: "#09090b",        // same as bg per shadcn dark
+  card: "#111113",        // slightly lighter than bg so rounded corners show
   cardBorder: "#27272a",  // zinc-800
   muted: "#27272a",       // zinc-800
   mutedFg: "#a1a1aa",     // zinc-400
@@ -50,7 +50,7 @@ const AVATAR_COLORS: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 const cardStyle: CSSStyle = {
-  backgroundColor: "#09090b",
+  backgroundColor: t.card,
   borderRadius: 8,
   border: "round" as const,
   borderColor: "#27272a",
@@ -80,7 +80,7 @@ function Header({ active }: { active: Tab }) {
       <Text style={{ color: t.foreground, fontWeight: "bold" }}>
         {"Dashboard"}
       </Text>
-      <Box style={{ flexDirection: "row", gap: 1 }}>
+      <Box style={{ flexDirection: "row", gap: 2 }}>
         {TABS.map((tab) => {
           const isActive = tab === active;
           return (
