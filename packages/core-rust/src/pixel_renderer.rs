@@ -222,14 +222,14 @@ impl PixelRenderer {
     /// Fast hash of canvas pixel data for dirty detection.
     fn hash_canvas(canvas: &PixelCanvas) -> u64 {
         // FNV-1a inspired simple hash — fast enough for frame comparison.
-        let mut h: u64 = 0xcbf29ce484222325;
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         // Sample every 64th byte for speed (full hash of 5MB would be slow).
         let data = &canvas.data;
         let step = (data.len() / 4096).max(1);
         let mut i = 0;
         while i < data.len() {
             h ^= data[i] as u64;
-            h = h.wrapping_mul(0x100000001b3);
+            h = h.wrapping_mul(0x0100_0000_01b3);
             i += step;
         }
         h
