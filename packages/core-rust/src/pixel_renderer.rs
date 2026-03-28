@@ -165,11 +165,27 @@ pub struct PixelRenderer {
 impl PixelRenderer {
     /// Create a new pixel renderer for the given terminal dimensions.
     pub fn new(cols: u32, rows: u32, cell_w: u32, cell_h: u32) -> Self {
+        Self::new_with_font_system(cols, rows, cell_w, cell_h, FontSystem::new())
+    }
+
+    /// Create a pixel renderer with a pre-loaded [`FontSystem`].
+    ///
+    /// This avoids loading fonts on the render thread -- callers can load
+    /// fonts eagerly on the main thread (e.g. in `EngineState::new()`) and
+    /// pass the result here.  This fixes a hang when `std::fs::read` of
+    /// system font files blocks in headless / background processes.
+    pub fn new_with_font_system(
+        cols: u32,
+        rows: u32,
+        cell_w: u32,
+        cell_h: u32,
+        font_system: FontSystem,
+    ) -> Self {
         let px_w = cols * cell_w;
         let px_h = rows * cell_h;
         Self {
             canvas: PixelCanvas::new(px_w, px_h),
-            font_system: FontSystem::new(),
+            font_system,
             cell_w,
             cell_h,
             cols,
