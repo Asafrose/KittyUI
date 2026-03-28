@@ -115,6 +115,8 @@ export interface AppOptions {
   fps?: number;
   /** Enable debug logging (default: false). */
   debug?: boolean;
+  /** Render mode: "auto" (default), "pixel" (force Kitty graphics), "cell" (text only). */
+  renderMode?: "auto" | "pixel" | "cell";
 }
 
 /** Handle returned by `createApp()` for programmatic control. */
@@ -149,8 +151,8 @@ export const createApp = (
   const bridge = new Bridge();
   const initResult = bridge.init();
 
-  // Auto-detect rendering mode: use pixel rendering on Kitty-capable terminals.
-  bridge.setRenderMode("auto");
+  // Set rendering mode (auto-detect Kitty, or force pixel/cell).
+  bridge.setRenderMode(options.renderMode ?? "auto");
 
   // Enable mouse tracking (SGR mode with move events)
   process.stdout.write(MOUSE_ENABLE);
