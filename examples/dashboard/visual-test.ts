@@ -1,85 +1,36 @@
 /**
  * Visual test runner for the dashboard.
- * Runs the app in a PTY, sends keystrokes, and saves screenshots.
+ *
+ * This is a thin wrapper that invokes the Python PTY-based test harness.
+ * The Python script creates a real pseudo-terminal, which solves:
+ *   - process.stdin raw mode (requires a TTY)
+ *   - ioctl terminal size (TIOCSWINSZ sets custom dimensions)
+ *   - process.stdout.columns being undefined
  *
  * Usage:
  *   bun run examples/dashboard/visual-test.ts
+ *   # or directly:
+ *   python3 examples/dashboard/visual-test.py
  *
  * Screenshots are saved to /tmp/kittyui-visual-test/latest.png
  */
-import { spawn } from "bun";
-import { existsSync, mkdirSync } from "fs";
+import { spawnSync } from "bun";
+import { resolve } from "path";
 
-const SCREENSHOT_DIR = "/tmp/kittyui-visual-test";
-const APP_PATH = "examples/dashboard/src/main.tsx";
+const scriptDir = import.meta.dir;
+const pythonScript = resolve(scriptDir, "visual-test.py");
 
-async function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+console.log("Starting PTY-based visual test harness...\n");
 
-async function main() {
-  mkdirSync(SCREENSHOT_DIR, { recursive: true });
+const result = spawnSync({
+  cmd: ["python3", pythonScript],
+  cwd: resolve(scriptDir, "../.."),
+  stdin: "inherit",
+  stdout: "inherit",
+  stderr: "inherit",
+  env: {
+    ...process.env,
+  },
+});
 
-  // Start the app with pixel mode and screenshot capture
-  const proc = spawn({
-    cmd: [
-      "bun",
-      "run",
-      APP_PATH,
-      "--pixel",
-      "--screenshot-dir",
-      SCREENSHOT_DIR,
-    ],
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-    env: {
-      ...process.env,
-      TERM_PROGRAM: "kitty",
-      KITTY_WINDOW_ID: "1",
-      COLUMNS: "130",
-      LINES: "54",
-    },
-  });
-
-  // Wait for first render
-  await sleep(3000);
-  console.log(`Frame 1: Overview page saved`);
-
-  // Send right arrow to switch to Analytics tab
-  proc.stdin.write("\x1b[C");
-  await sleep(1000);
-  console.log("Frame 2: After right arrow");
-
-  // Send right arrow again for Reports tab
-  proc.stdin.write("\x1b[C");
-  await sleep(1000);
-  console.log("Frame 3: After second right arrow");
-
-  // Send left arrow back
-  proc.stdin.write("\x1b[D");
-  await sleep(1000);
-  console.log("Frame 4: After left arrow");
-
-  // Quit
-  proc.stdin.write("q");
-  await sleep(500);
-
-  const screenshotPath = `${SCREENSHOT_DIR}/latest.png`;
-  if (existsSync(screenshotPath)) {
-    console.log(`\nScreenshots saved to ${SCREENSHOT_DIR}/`);
-    console.log(`Latest: ${screenshotPath}`);
-  } else {
-    console.error(
-      "\nWarning: No screenshot found. The pixel renderer may not have been active.",
-    );
-    console.error(
-      "Make sure the terminal supports Kitty graphics or pass --pixel to force it.",
-    );
-  }
-
-  proc.kill();
-  process.exit(0);
-}
-
-main().catch(console.error);
+process.exit(result.exitCode ?? 1);
