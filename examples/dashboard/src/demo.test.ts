@@ -35,7 +35,6 @@ describe("dashboard card styles", () => {
     backgroundColor: "#18181b",
     borderRadius: 8,
     boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
-    border: "round",
     borderColor: "#27272a",
     padding: [1, 2],
     flexDirection: "column",
@@ -108,7 +107,6 @@ describe.skipIf(!canRun)("pixel rendering produces output", () => {
       backgroundColor: "#18181b",
       borderRadius: 8,
       boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
-      border: "round",
       borderColor: "#27272a",
     });
     enc.appendChild(1, 2);

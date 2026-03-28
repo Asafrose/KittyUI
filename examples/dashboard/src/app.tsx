@@ -52,7 +52,6 @@ const AVATAR_COLORS: Record<string, string> = {
 const cardStyle: CSSStyle = {
   backgroundColor: t.card,
   borderRadius: 16,
-  border: "round" as const,
   borderColor: "#27272a",
   padding: [1, 2] as [number, number],
   flexDirection: "column" as const,

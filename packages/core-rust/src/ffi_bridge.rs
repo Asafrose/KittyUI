@@ -9,13 +9,10 @@ use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
-use crate::ansi::{self, Color, Style as CellStyle};
-use crate::cell::DoubleBuffer;
+use crate::ansi::{self, Color};
 use crate::focus::{FocusManager, FocusMeta};
 use crate::hit_test::HitTester;
-use crate::image;
 use crate::layout::{LayoutNodeId, LayoutTree, NodeStyle};
-use crate::pixel_canvas::PixelCanvas;
 use crate::pixel_renderer::{self, PixelRenderer};
 use crate::terminal_caps;
 
@@ -73,24 +70,6 @@ enum BorderPreset {
 }
 
 impl BorderPreset {
-    /// Returns (tl, tr, bl, br, horizontal, vertical) box-drawing characters.
-    const fn chars(self) -> (char, char, char, char, char, char) {
-        match self {
-            Self::Single => (
-                '\u{250c}', '\u{2510}', '\u{2514}', '\u{2518}', '\u{2500}', '\u{2502}',
-            ),
-            Self::Round => (
-                '\u{256d}', '\u{256e}', '\u{2570}', '\u{256f}', '\u{2500}', '\u{2502}',
-            ),
-            Self::Double => (
-                '\u{2554}', '\u{2557}', '\u{255a}', '\u{255d}', '\u{2550}', '\u{2551}',
-            ),
-            Self::Bold => (
-                '\u{250f}', '\u{2513}', '\u{2517}', '\u{251b}', '\u{2501}', '\u{2503}',
-            ),
-        }
-    }
-
     fn from_str(s: &str) -> Option<Self> {
         match s {
             "single" => Some(Self::Single),
@@ -105,6 +84,10 @@ impl BorderPreset {
 /// Border style for a node.
 #[derive(Clone, Debug)]
 struct BorderStyle {
+    /// Preset is parsed from JSON but only used to detect border presence
+    /// in the pixel renderer (the cell-based box-drawing path was removed
+    /// in issue #156).
+    #[allow(dead_code)]
     preset: BorderPreset,
     color: Option<Color>,
 }
@@ -135,13 +118,6 @@ struct BoxShadow {
     blur_radius: f32,
     spread_radius: f32,
     color: [u8; 4],
-}
-
-/// A rendered shadow image ready for Kitty protocol output.
-struct ShadowImage {
-    data: crate::image::ImageData,
-    col: u32,
-    row: u32,
 }
 
 /// Visual (non-layout) style properties for a node.
@@ -193,18 +169,6 @@ struct TextColorSpan {
 // Global engine state
 // ---------------------------------------------------------------------------
 
-/// Rendering mode selection.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum RenderMode {
-    /// Traditional cell-based rendering (default).
-    Cell,
-    /// Full-frame pixel rendering via Kitty graphics protocol.
-    Pixel,
-    /// Auto-detect: use pixel rendering when Kitty graphics is available.
-    #[default]
-    Auto,
-}
-
 struct EngineState {
     layout: LayoutTree,
     /// Maps user-facing u32 node ids to Taffy `LayoutNodeId` handles.
@@ -231,8 +195,6 @@ struct EngineState {
     hit_tester: HitTester,
     /// Reverse map from layout node ids to user-facing u32 ids.
     reverse_node_map: HashMap<LayoutNodeId, u32>,
-    /// Double buffer for efficient terminal rendering.
-    double_buf: DoubleBuffer,
     /// Visual (non-layout) style per node.
     visual_styles: HashMap<u32, NodeVisualStyle>,
     /// Output writer — `None` means write to real stdout.
@@ -247,35 +209,8 @@ struct EngineState {
     cell_cols: Option<u32>,
     /// Terminal cell row count (from CSI 18 t response).
     cell_rows: Option<u32>,
-    /// Accumulated pixel-rendered escape sequences (Kitty graphics protocol).
-    pixel_output: Vec<u8>,
-    /// Gradient image data queued during paint for Kitty protocol output.
-    gradient_images: Vec<GradientImage>,
-    /// Next auto-incremented image id for gradient transmissions.
-    next_gradient_image_id: u32,
-    /// Shadow images pending output (collected during paint, flushed in render).
-    shadow_images_pending: Vec<ShadowImage>,
     /// Pixel renderer for full-frame Kitty graphics output.
     pixel_renderer: Option<PixelRenderer>,
-    /// Rendering mode (cell, pixel, or auto-detect).
-    render_mode: RenderMode,
-}
-
-/// A gradient rendered to pixel data, ready for Kitty protocol output.
-#[allow(dead_code)]
-struct GradientImage {
-    /// Terminal column position.
-    col: u32,
-    /// Terminal row position.
-    row: u32,
-    /// Width in terminal cells.
-    cell_w: u32,
-    /// Height in terminal cells.
-    cell_h: u32,
-    /// Kitty image id used for transmission.
-    image_id: u32,
-    /// Encoded pixel data (PNG or raw RGBA).
-    canvas: PixelCanvas,
 }
 
 impl EngineState {
@@ -294,7 +229,6 @@ impl EngineState {
             focus: FocusManager::new(),
             hit_tester: HitTester::new(),
             reverse_node_map: HashMap::new(),
-            double_buf: DoubleBuffer::new(80, 24),
             visual_styles: HashMap::new(),
             output: None,
             terminal_caps: terminal_caps::detect(),
@@ -302,12 +236,7 @@ impl EngineState {
             pixel_height: None,
             cell_cols: None,
             cell_rows: None,
-            pixel_output: Vec::new(),
-            gradient_images: Vec::new(),
-            next_gradient_image_id: 50000,
-            shadow_images_pending: Vec::new(),
             pixel_renderer: None,
-            render_mode: RenderMode::default(),
         }
     }
 
@@ -323,16 +252,6 @@ impl EngineState {
         } else {
             let _ = std::io::stdout().lock().write_all(data);
             let _ = std::io::stdout().lock().flush();
-        }
-    }
-
-    /// Ensure the double buffer matches the current cols/rows dimensions.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    fn ensure_buffer_size(&mut self) {
-        let w = self.cols as usize;
-        let h = self.rows as usize;
-        if self.double_buf.width() != w || self.double_buf.height() != h {
-            self.double_buf.resize(w, h);
         }
     }
 }
@@ -617,7 +536,6 @@ pub unsafe extern "C" fn init_test_mode(cols: u16, rows: u16, out_ptr: *mut Init
     state.output = Some(Vec::new());
     state.cols = f32::from(cols);
     state.rows = f32::from(rows);
-    state.double_buf = DoubleBuffer::new(usize::from(cols), usize::from(rows));
     *guard = Some(state);
     if !out_ptr.is_null() {
         unsafe {
@@ -1564,18 +1482,6 @@ pub unsafe extern "C" fn apply_mutations(buffer_ptr: *const u8, buffer_len: u32)
 // Rendering
 // ---------------------------------------------------------------------------
 
-/// Check whether a cell at (row, col) is inside the active clip rectangle.
-#[allow(clippy::cast_precision_loss)]
-fn in_clip(row: usize, col: usize, clip: Option<(f32, f32, f32, f32)>) -> bool {
-    if let Some((cx, cy, cw, ch)) = clip {
-        let col_f = col as f32;
-        let row_f = row as f32;
-        col_f >= cx && col_f < cx + cw && row_f >= cy && row_f < cy + ch
-    } else {
-        true
-    }
-}
-
 /// Convert a terminal `Color` to an RGBA pixel array.
 fn color_to_rgba(color: Color, alpha: u8) -> [u8; 4] {
     match color {
@@ -1584,441 +1490,10 @@ fn color_to_rgba(color: Color, alpha: u8) -> [u8; 4] {
     }
 }
 
-/// Walk the layout tree recursively and paint each node into the back buffer.
+/// Run the full render pipeline: layout, paint, output, flush events.
 ///
-/// `parent_x` / `parent_y` are the absolute position of the parent so that
-/// each child's relative layout coordinates can be converted to absolute
-/// positions in the cell buffer.
-///
-/// `inherited_bg` / `inherited_fg` are the resolved colors from ancestor
-/// nodes, allowing children to inherit colours they don't override.
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::too_many_arguments,
-    clippy::too_many_lines,
-    clippy::similar_names
-)]
-#[allow(clippy::fn_params_excessive_bools)]
-fn paint_node(
-    state: &EngineState,
-    back: &mut crate::cell::CellBuffer,
-    pixel_output: &mut Vec<u8>,
-    gradient_images: &mut Vec<GradientImage>,
-    next_gradient_id: &mut u32,
-    shadow_images: &mut Vec<ShadowImage>,
-    node_id: u32,
-    parent_x: f32,
-    parent_y: f32,
-    inherited_bg: Option<Color>,
-    inherited_fg: Option<Color>,
-    inherited_bold: bool,
-    inherited_italic: bool,
-    inherited_underline: bool,
-    inherited_strikethrough: bool,
-    inherited_dim: bool,
-    clip_rect: Option<(f32, f32, f32, f32)>,
-) {
-    let Some(&layout_id) = state.node_map.get(&node_id) else {
-        return;
-    };
-    let Ok(cl) = state.layout.get_layout(layout_id) else {
-        return;
-    };
-
-    let abs_x = parent_x + cl.x;
-    let abs_y = parent_y + cl.y;
-    let x0 = abs_x as usize;
-    let y0 = abs_y as usize;
-    let w = cl.width as usize;
-    let h = cl.height as usize;
-
-    // Build cell style from visual style, inheriting from ancestors.
-    let vs = state.visual_styles.get(&node_id);
-    let own_bg = vs.and_then(|v| v.bg);
-    let own_fg = vs.and_then(|v| v.fg);
-    let resolved_bg = own_bg.or(inherited_bg);
-    let resolved_fg = own_fg.or(inherited_fg);
-    let resolved_bold = vs.map_or(
-        inherited_bold,
-        |v| if v.bold { true } else { inherited_bold },
-    );
-    let resolved_italic = vs.map_or(inherited_italic, |v| {
-        if v.italic {
-            true
-        } else {
-            inherited_italic
-        }
-    });
-    let resolved_underline = vs.map_or(inherited_underline, |v| {
-        if v.underline {
-            true
-        } else {
-            inherited_underline
-        }
-    });
-    let resolved_strikethrough = vs.map_or(inherited_strikethrough, |v| {
-        if v.strikethrough {
-            true
-        } else {
-            inherited_strikethrough
-        }
-    });
-    let resolved_dim = vs.map_or(inherited_dim, |v| if v.dim { true } else { inherited_dim });
-
-    // Paint box-shadow via pixel rendering (before background).
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::cast_precision_loss,
-        clippy::items_after_statements
-    )]
-    if let Some(shadow) = vs.and_then(|v| v.box_shadow.as_ref()) {
-        let cell_w: u32 = 8;
-        let cell_h: u32 = 16;
-
-        // Expansion must cover blur + spread + offset so the shadow shape
-        // (which is drawn at `expand + offset`) fits entirely inside the
-        // canvas with enough room for the blur to bleed outward.
-        let expand_x = (shadow.blur_radius + shadow.spread_radius.max(0.0) + shadow.offset_x.abs())
-            .ceil() as u32;
-        let expand_y = (shadow.blur_radius + shadow.spread_radius.max(0.0) + shadow.offset_y.abs())
-            .ceil() as u32;
-        let node_w = w as u32;
-        let node_h = h as u32;
-        let px_w = node_w * cell_w + expand_x * 2;
-        let px_h = node_h * cell_h + expand_y * 2;
-
-        // Cap canvas size to avoid excessive memory use with large blur values.
-        const MAX_SHADOW_DIM: u32 = 4096;
-
-        if px_w > 0 && px_h > 0 && px_w <= MAX_SHADOW_DIM && px_h <= MAX_SHADOW_DIM {
-            let mut canvas = crate::pixel_canvas::PixelCanvas::new(px_w, px_h);
-
-            // Draw shadow shape centred on the node's pixel footprint.
-            // Spread enlarges the shape symmetrically, so the origin shifts
-            // inward by -spread (i.e. outward when spread > 0).
-            let expand_xf = expand_x as f32;
-            let expand_yf = expand_y as f32;
-            let sx = expand_xf + shadow.offset_x - shadow.spread_radius;
-            let sy = expand_yf + shadow.offset_y - shadow.spread_radius;
-            let node_px_w = node_w as f32 * cell_w as f32;
-            let node_px_h = node_h as f32 * cell_h as f32;
-            let sw = (node_px_w + shadow.spread_radius * 2.0).max(0.0);
-            let sh = (node_px_h + shadow.spread_radius * 2.0).max(0.0);
-
-            let radius = vs.map_or(0.0, |v| v.border_radius);
-            if radius > 0.0 {
-                canvas.fill_rounded_rect(sx, sy, sw, sh, radius, shadow.color);
-            } else {
-                canvas.fill_rect(sx, sy, sw, sh, shadow.color);
-            }
-
-            // Apply gaussian blur (3-pass box blur approximation)
-            let blur_px = shadow.blur_radius.ceil() as u32;
-            canvas.box_blur(blur_px);
-
-            // Transmit via Kitty protocol — place image at shadow offset position
-            if let Ok(img_data) = canvas.to_image_data() {
-                let expand_cells_x = (expand_x / cell_w) as usize + 1;
-                let expand_cells_y = (expand_y / cell_h) as usize + 1;
-                let img_x = x0.saturating_sub(expand_cells_x);
-                let img_y = y0.saturating_sub(expand_cells_y);
-
-                shadow_images.push(ShadowImage {
-                    data: img_data,
-                    col: img_x as u32,
-                    row: img_y as u32,
-                });
-            }
-        }
-    }
-
-    // Pixel-rendered rounded background via Kitty graphics protocol.
-    let border_radius = vs.map_or(0.0, |v| v.border_radius);
-
-    // Paint cell-based background only when NOT using pixel rendering.
-    // When border_radius > 0 the background is drawn as a rounded-rect image;
-    // painting rectangular cells underneath would show through the transparent
-    // corners and defeat the purpose of rounded corners.
-    if resolved_bg.is_some() && border_radius <= 0.0 {
-        let cell_style = CellStyle {
-            bg: resolved_bg,
-            fg: resolved_fg,
-            bold: resolved_bold,
-            italic: resolved_italic,
-            underline: resolved_underline,
-            strikethrough: resolved_strikethrough,
-            dim: resolved_dim,
-            ..CellStyle::new()
-        };
-        for row in y0..y0 + h {
-            for col in x0..x0 + w {
-                if !in_clip(row, col, clip_rect) {
-                    continue;
-                }
-                if let Some(cell) = back.get_mut(row, col) {
-                    cell.ch = ' ';
-                    cell.style = cell_style;
-                }
-            }
-        }
-    }
-
-    if border_radius > 0.0 && w > 0 && h > 0 {
-        // Read cell pixel dimensions from terminal capabilities.
-        let cell_w = state.terminal_caps.cell_pixel_width;
-        let cell_h = state.terminal_caps.cell_pixel_height;
-
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let px_w = (w as u32) * cell_w;
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let px_h = (h as u32) * cell_h;
-
-        if px_w > 0 && px_h > 0 {
-            let mut canvas = crate::pixel_canvas::PixelCanvas::new(px_w, px_h);
-
-            let bg = resolved_bg.unwrap_or(Color::Rgb(0, 0, 0));
-            let rgba = color_to_rgba(bg, 255);
-
-            #[allow(clippy::cast_precision_loss)]
-            canvas.fill_rounded_rect(0.0, 0.0, px_w as f32, px_h as f32, border_radius, rgba);
-
-            if let Ok(img_data) = canvas.to_image_data() {
-                let image_id = crate::image::ImageCache::next_id();
-                if let Ok(transmit_bytes) = crate::image::encode_transmit(&img_data, image_id) {
-                    // Move cursor to the node position and transmit + display the image.
-                    let cursor_move = format!("\x1b[{};{}H", y0 + 1, x0 + 1);
-                    let display_bytes = crate::image::encode_display_z(image_id, None, -1);
-
-                    pixel_output.extend_from_slice(cursor_move.as_bytes());
-                    pixel_output.extend_from_slice(&transmit_bytes);
-                    pixel_output.extend_from_slice(&display_bytes);
-                }
-            }
-        }
-    }
-
-    // Paint gradient background via pixel rendering (Kitty graphics protocol).
-    #[allow(
-        clippy::cast_precision_loss,
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss
-    )]
-    if let Some(grad) = vs.and_then(|v| v.gradient.as_ref()) {
-        // Use terminal capabilities for cell dimensions, fall back to defaults.
-        let cell_px_w: u32 = if state.terminal_caps.cell_pixel_width > 0 {
-            state.terminal_caps.cell_pixel_width
-        } else {
-            8
-        };
-        let cell_px_h: u32 = if state.terminal_caps.cell_pixel_height > 0 {
-            state.terminal_caps.cell_pixel_height
-        } else {
-            16
-        };
-        let node_width = w as u32;
-        let node_height = h as u32;
-        let px_w = node_width * cell_px_w;
-        let px_h = node_height * cell_px_h;
-
-        if px_w > 0 && px_h > 0 {
-            let mut canvas = PixelCanvas::new(px_w, px_h);
-            let stops: Vec<(f32, [u8; 4])> =
-                grad.stops.iter().map(|s| (s.position, s.color)).collect();
-            // Convert CSS angle to PixelCanvas angle:
-            // CSS: 0deg = to top, 90deg = to right, 180deg = to bottom
-            // PixelCanvas: 0deg = left-to-right, 90deg = top-to-bottom
-            // Conversion: canvas_angle = css_angle - 90
-            let canvas_angle = grad.angle_deg - 90.0;
-            canvas.fill_linear_gradient(0.0, 0.0, px_w as f32, px_h as f32, canvas_angle, &stops);
-
-            let image_id = *next_gradient_id;
-            *next_gradient_id += 1;
-
-            gradient_images.push(GradientImage {
-                col: x0 as u32,
-                row: y0 as u32,
-                cell_w: node_width,
-                cell_h: node_height,
-                image_id,
-                canvas,
-            });
-        }
-    }
-
-    // Paint border if present.
-    if let Some(border) = vs.and_then(|v| v.border.as_ref()) {
-        if w >= 2 && h >= 2 {
-            let (tl, tr, bl, br, horiz, vert) = border.preset.chars();
-            let border_style = CellStyle {
-                fg: border.color.or(resolved_fg),
-                bg: inherited_bg,
-                ..CellStyle::new()
-            };
-
-            // Corners
-            if let Some(cell) = back.get_mut(y0, x0) {
-                cell.ch = tl;
-                cell.style = border_style;
-            }
-            if let Some(cell) = back.get_mut(y0, x0 + w - 1) {
-                cell.ch = tr;
-                cell.style = border_style;
-            }
-            if let Some(cell) = back.get_mut(y0 + h - 1, x0) {
-                cell.ch = bl;
-                cell.style = border_style;
-            }
-            if let Some(cell) = back.get_mut(y0 + h - 1, x0 + w - 1) {
-                cell.ch = br;
-                cell.style = border_style;
-            }
-
-            // Horizontal edges (top and bottom)
-            for col in (x0 + 1)..(x0 + w - 1) {
-                if let Some(cell) = back.get_mut(y0, col) {
-                    cell.ch = horiz;
-                    cell.style = border_style;
-                }
-                if let Some(cell) = back.get_mut(y0 + h - 1, col) {
-                    cell.ch = horiz;
-                    cell.style = border_style;
-                }
-            }
-
-            // Vertical edges (left and right)
-            for row in (y0 + 1)..(y0 + h - 1) {
-                if let Some(cell) = back.get_mut(row, x0) {
-                    cell.ch = vert;
-                    cell.style = border_style;
-                }
-                if let Some(cell) = back.get_mut(row, x0 + w - 1) {
-                    cell.ch = vert;
-                    cell.style = border_style;
-                }
-            }
-        }
-    }
-
-    // Paint text content — use resolved colours, text attributes, and per-span overrides.
-    // Respect text_overflow: Clip stops at boundary, Ellipsis places an ellipsis at the end.
-    let text_overflow = vs.map_or(TextOverflow::Clip, |v| v.text_overflow);
-    if let Some(text) = state.text_content.get(&node_id) {
-        if !text.is_empty() && w > 0 {
-            let char_count = text.chars().count();
-            let needs_ellipsis = text_overflow == TextOverflow::Ellipsis && char_count > w;
-            let paint_limit = if needs_ellipsis { w - 1 } else { w };
-            let spans = state.text_spans.get(&node_id);
-            for (i, ch) in text.chars().enumerate() {
-                if i >= paint_limit {
-                    break;
-                }
-                let c = x0 + i;
-                if c >= back.width() {
-                    break;
-                }
-                if y0 < back.height() {
-                    if !in_clip(y0, c, clip_rect) {
-                        continue;
-                    }
-                    if let Some(cell) = back.get_mut(y0, c) {
-                        cell.ch = ch;
-                        cell.style.bold = resolved_bold;
-                        cell.style.italic = resolved_italic;
-                        cell.style.underline = resolved_underline;
-                        cell.style.strikethrough = resolved_strikethrough;
-                        cell.style.dim = resolved_dim;
-                        let span_fg = spans.and_then(|ss| {
-                            let idx = i as u16;
-                            ss.iter()
-                                .rev()
-                                .find(|s| idx >= s.start && idx < s.end)
-                                .map(|s| s.fg)
-                        });
-                        cell.style.fg = span_fg.or(resolved_fg);
-                        if let Some(bg) = resolved_bg {
-                            cell.style.bg = Some(bg);
-                        }
-                    }
-                }
-            }
-            // Place ellipsis character at the last position.
-            if needs_ellipsis {
-                let c = x0 + paint_limit;
-                if c < back.width() && y0 < back.height() {
-                    if let Some(cell) = back.get_mut(y0, c) {
-                        cell.ch = '\u{2026}'; // ellipsis
-                        cell.style.bold = resolved_bold;
-                        cell.style.italic = resolved_italic;
-                        if let Some(fg) = resolved_fg {
-                            cell.style.fg = Some(fg);
-                        }
-                        if let Some(bg) = resolved_bg {
-                            cell.style.bg = Some(bg);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Determine the clip rect for children.
-    let own_overflow = vs.map_or(Overflow::Visible, |v| v.overflow);
-    let child_clip = if own_overflow == Overflow::Hidden {
-        let own_rect = (abs_x, abs_y, cl.width, cl.height);
-        Some(intersect_clip(clip_rect, own_rect))
-    } else {
-        clip_rect
-    };
-
-    // Recurse into children.
-    if let Ok(children) = state.layout.children(layout_id) {
-        for child_lid in children {
-            if let Some(&child_uid) = state.reverse_node_map.get(&child_lid) {
-                paint_node(
-                    state,
-                    back,
-                    pixel_output,
-                    gradient_images,
-                    next_gradient_id,
-                    shadow_images,
-                    child_uid,
-                    abs_x,
-                    abs_y,
-                    resolved_bg,
-                    resolved_fg,
-                    resolved_bold,
-                    resolved_italic,
-                    resolved_underline,
-                    resolved_strikethrough,
-                    resolved_dim,
-                    child_clip,
-                );
-            }
-        }
-    }
-}
-
-/// Intersect an optional inherited clip rect with a new rect.
-fn intersect_clip(
-    inherited: Option<(f32, f32, f32, f32)>,
-    rect: (f32, f32, f32, f32),
-) -> (f32, f32, f32, f32) {
-    if let Some((ix, iy, iw, ih)) = inherited {
-        let x0 = ix.max(rect.0);
-        let y0 = iy.max(rect.1);
-        let x1 = (ix + iw).min(rect.0 + rect.2);
-        let y1 = (iy + ih).min(rect.1 + rect.3);
-        (x0, y0, (x1 - x0).max(0.0), (y1 - y0).max(0.0))
-    } else {
-        rect
-    }
-}
-
-/// Run the full render pipeline: layout, paint, diff, output, flush events.
+/// Uses the pixel renderer exclusively (issue #156 removed the cell-based path).
 #[no_mangle]
-#[allow(clippy::too_many_lines)]
 pub extern "C" fn render_frame() {
     with_engine(|state| {
         // 1. Compute layout and rebuild hit-test grid.
@@ -2038,188 +1513,34 @@ pub extern "C" fn render_frame() {
 
         // 2. Paint and output only when dirty.
         if state.dirty {
-            // Determine whether to use pixel rendering for this frame.
-            let use_pixel = match state.render_mode {
-                RenderMode::Pixel => true,
-                RenderMode::Auto => state.terminal_caps.kitty_graphics,
-                RenderMode::Cell => false,
-            };
+            // Lazily initialise the pixel renderer.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            if state.pixel_renderer.is_none() {
+                let cell_w = state.terminal_caps.cell_pixel_width;
+                let cell_h = state.terminal_caps.cell_pixel_height;
+                state.pixel_renderer = Some(PixelRenderer::new(
+                    state.cols as u32,
+                    state.rows as u32,
+                    cell_w,
+                    cell_h,
+                ));
+            }
 
-            // Allow env var override for render mode
-            let use_pixel = if let Ok(mode) = std::env::var("KITTYUI_RENDER_MODE") {
-                match mode.as_str() {
-                    "pixel" => true,
-                    "cell" => false,
-                    _ => use_pixel, // "auto" keeps the detected value
-                }
-            } else {
-                use_pixel
-            };
-
-            if use_pixel {
-                // ---- Full-frame pixel rendering path ----
-
-                // Lazily initialise the pixel renderer.
+            // Take the pixel renderer out temporarily to avoid
+            // borrow conflicts (paint_frame needs &EngineState while
+            // the renderer itself lives inside EngineState).
+            if let Some(mut pr) = state.pixel_renderer.take() {
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                if state.pixel_renderer.is_none() {
-                    let cell_w = state.terminal_caps.cell_pixel_width;
-                    let cell_h = state.terminal_caps.cell_pixel_height;
-                    state.pixel_renderer = Some(PixelRenderer::new(
-                        state.cols as u32,
-                        state.rows as u32,
-                        cell_w,
-                        cell_h,
-                    ));
+                pr.resize(state.cols as u32, state.rows as u32);
+                let output = pr.paint_frame(state);
+                state.write_output(&output);
+
+                // Auto-save screenshot if KITTYUI_SCREENSHOT env var is set.
+                if let Ok(path) = std::env::var("KITTYUI_SCREENSHOT") {
+                    let _ = pr.save_screenshot(&path);
                 }
 
-                // Take the pixel renderer out temporarily to avoid
-                // borrow conflicts (paint_frame needs &EngineState while
-                // the renderer itself lives inside EngineState).
-                if let Some(mut pr) = state.pixel_renderer.take() {
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    pr.resize(state.cols as u32, state.rows as u32);
-                    let output = pr.paint_frame(state);
-                    state.write_output(&output);
-
-                    // Auto-save screenshot if KITTYUI_SCREENSHOT env var is set.
-                    if let Ok(path) = std::env::var("KITTYUI_SCREENSHOT") {
-                        let _ = pr.save_screenshot(&path);
-                    }
-
-                    state.pixel_renderer = Some(pr);
-                }
-            } else {
-                // ---- Cell-based rendering path (existing) ----
-
-                state.ensure_buffer_size();
-
-                // Clear back buffer.
-                state.double_buf.back_mut().clear();
-
-                // Walk all nodes and paint them.
-                state.gradient_images.clear();
-                if let Some(root_id) = state.root_node {
-                    // We need to pass state immutably while mutating the buffer.
-                    // Temporarily take the back buffer out so we can pass state
-                    // to `paint_node` while mutating the buffer.
-                    let mut back_buf = {
-                        let back = state.double_buf.back_mut();
-                        let w = back.width();
-                        let h = back.height();
-                        let mut tmp = crate::cell::CellBuffer::new(w, h);
-                        std::mem::swap(back, &mut tmp);
-                        tmp
-                    };
-
-                    let mut pixel_buf = std::mem::take(&mut state.pixel_output);
-                    // Also take gradient_images out so paint_node can fill it.
-                    let mut grad_images = std::mem::take(&mut state.gradient_images);
-                    let mut next_grad_id = state.next_gradient_image_id;
-                    let mut shadow_images: Vec<ShadowImage> = Vec::new();
-
-                    paint_node(
-                        state,
-                        &mut back_buf,
-                        &mut pixel_buf,
-                        &mut grad_images,
-                        &mut next_grad_id,
-                        &mut shadow_images,
-                        root_id,
-                        0.0,
-                        0.0,
-                        None,
-                        None,
-                        false,
-                        false,
-                        false,
-                        false,
-                        false,
-                        None,
-                    );
-
-                    // Restore gradient images and id counter.
-                    state.gradient_images = grad_images;
-                    state.next_gradient_image_id = next_grad_id;
-
-                    // Swap the painted buffer back and restore pixel output.
-                    std::mem::swap(state.double_buf.back_mut(), &mut back_buf);
-                    state.pixel_output = pixel_buf;
-
-                    // Collect shadow images for output later (after delete).
-                    state.shadow_images_pending = shadow_images;
-                }
-
-                // --- Output pipeline ---
-                // Step 1: Delete ALL previous Kitty images (prevents ghosting on resize).
-                let has_shadows = !state.shadow_images_pending.is_empty();
-                let has_pixels = !state.pixel_output.is_empty();
-                let has_grads = !state.gradient_images.is_empty();
-                if has_shadows || has_pixels || has_grads {
-                    let delete_cmd = crate::image::encode_delete(crate::image::DeleteTarget::All);
-                    state.write_output(&delete_cmd);
-                }
-
-                // Step 2: Output shadow images (z=-2, behind everything).
-                let shadows = std::mem::take(&mut state.shadow_images_pending);
-                for shadow in &shadows {
-                    let img_id = crate::image::ImageCache::next_id();
-                    if let Ok(transmit_data) = crate::image::encode_transmit(&shadow.data, img_id) {
-                        state.write_output(&transmit_data);
-                        let move_cursor = format!("\x1b[{};{}H", shadow.row + 1, shadow.col + 1);
-                        state.write_output(move_cursor.as_bytes());
-                        let display_cmd = crate::image::encode_display_z(img_id, None, -2);
-                        state.write_output(&display_cmd);
-                    }
-                }
-                drop(shadows);
-
-                // Step 3: Output pixel images — border-radius backgrounds (z=-1).
-                if !state.pixel_output.is_empty() {
-                    let pixel_data = std::mem::take(&mut state.pixel_output);
-                    state.write_output(&pixel_data);
-                }
-
-                // Step 4: Output gradient images (z=-1).
-                let grad_images = std::mem::take(&mut state.gradient_images);
-                for grad_img in &grad_images {
-                    if let Ok(img_data) = grad_img.canvas.to_image_data() {
-                        if let Ok(transmit_data) =
-                            image::encode_transmit(&img_data, grad_img.image_id)
-                        {
-                            state.write_output(&transmit_data);
-                            let cursor_move =
-                                format!("\x1b[{};{}H", grad_img.row + 1, grad_img.col + 1);
-                            state.write_output(cursor_move.as_bytes());
-                            let display = image::encode_display_z(grad_img.image_id, None, -1);
-                            state.write_output(&display);
-                        }
-                    }
-                }
-                drop(grad_images);
-
-                // Step 5: Output cell content (text on top, z=0).
-                // When pixel rendering is active, use full_render instead of diff
-                // to prevent ghosting artifacts from partial updates.
-                let is_test_mode = state.output.is_some();
-                let use_full_render = is_test_mode || has_shadows || has_pixels || has_grads;
-                if use_full_render {
-                    // Clear screen first, then render all cells.
-                    if !is_test_mode {
-                        state.write_output(b"\x1b[2J");
-                    }
-                    let rendered = state.double_buf.full_render();
-                    if !rendered.is_empty() {
-                        state.write_output(&rendered);
-                    }
-                } else {
-                    let diff = state.double_buf.diff();
-                    if !diff.is_empty() {
-                        state.write_output(&diff);
-                    }
-                }
-
-                // Swap buffers.
-                state.double_buf.swap_no_clear();
+                state.pixel_renderer = Some(pr);
             }
         }
 
@@ -2234,23 +1555,6 @@ pub extern "C" fn render_frame() {
                 cb(ptr, len);
             }
             state.event_buffer.clear();
-        }
-    });
-}
-
-/// Set the rendering mode: 0 = Cell, 1 = Pixel, 2+ = Auto.
-#[no_mangle]
-pub extern "C" fn set_render_mode(mode: u8) {
-    with_engine(|state| {
-        state.render_mode = match mode {
-            0 => RenderMode::Cell,
-            1 => RenderMode::Pixel,
-            _ => RenderMode::Auto,
-        };
-        // Invalidate any cached pixel renderer when switching modes so it
-        // gets re-created with current dimensions on the next frame.
-        if state.render_mode == RenderMode::Cell {
-            state.pixel_renderer = None;
         }
     });
 }
@@ -3261,100 +2565,10 @@ mod tests {
 
     // -- Render pipeline tests --
 
-    #[test]
-    #[serial]
-    fn render_frame_produces_ansi_output_with_styles() {
-        setup();
-        let mut buf = Vec::new();
-        buf.extend(encode_create_node(
-            1,
-            r#"{"width":80,"height":24,"flexDirection":"column"}"#,
-        ));
-        buf.extend(encode_create_node(
-            2,
-            r##"{"width":10,"height":3,"backgroundColor":"#FF0000","color":"#00FF00"}"##,
-        ));
-        buf.extend(encode_append_child(1, 2));
-        buf.extend(encode_set_text(2, "Hi"));
-        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
-
-        render_frame();
-
-        let output = get_output();
-        let output_str = String::from_utf8_lossy(&output);
-        // Should contain ANSI escape sequences for the red background.
-        assert!(
-            !output.is_empty(),
-            "render_frame should produce output when nodes have styles"
-        );
-        // Should contain the cursor-positioning (CUP) sequence.
-        assert!(
-            output_str.contains('H'),
-            "output should contain CUP sequence"
-        );
-        // Should contain the text content.
-        assert!(output_str.contains("Hi"), "output should contain text 'Hi'");
-        // Should contain RGB color codes for red bg (48;2;255;0;0).
-        assert!(
-            output_str.contains("48;2;255;0;0"),
-            "output should contain red background SGR: {output_str}"
-        );
-        // Should contain RGB color codes for green fg (38;2;0;255;0).
-        assert!(
-            output_str.contains("38;2;0;255;0"),
-            "output should contain green foreground SGR: {output_str}"
-        );
-
-        teardown();
-    }
-
-    #[test]
-    #[serial]
-    fn unchanged_frames_produce_no_diff_after_swap() {
-        setup();
-        let mut buf = Vec::new();
-        buf.extend(encode_create_node(
-            1,
-            r#"{"width":80,"height":24,"flexDirection":"column"}"#,
-        ));
-        buf.extend(encode_create_node(
-            2,
-            r##"{"width":5,"height":2,"backgroundColor":"#0000FF"}"##,
-        ));
-        buf.extend(encode_append_child(1, 2));
-        buf.extend(encode_set_text(2, "AB"));
-        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
-
-        // First render — should produce output.
-        render_frame();
-        let first_output = get_output();
-        assert!(
-            !first_output.is_empty(),
-            "first render should produce output"
-        );
-
-        // Clear captured output.
-        clear_output();
-
-        // Mark dirty again with the exact same content.
-        request_render();
-        render_frame();
-
-        let second_output = get_output();
-        // In test mode (captured output), full_render is used so output is always
-        // produced for complete screen state. The second render should produce
-        // identical output to the first.
-        assert!(
-            !second_output.is_empty(),
-            "second render in test mode should produce full output"
-        );
-        assert_eq!(
-            first_output, second_output,
-            "unchanged content should produce identical output"
-        );
-
-        teardown();
-    }
+    // Cell-based rendering tests removed (issue #156).
+    // `render_frame_produces_ansi_output_with_styles` and
+    // `unchanged_frames_produce_no_diff_after_swap` tested ANSI/cell output
+    // which no longer exists; the pixel renderer is the sole path.
 
     #[test]
     #[serial]
@@ -3532,8 +2746,6 @@ mod tests {
         with_engine(|state| {
             assert!((state.cols - 40.0).abs() < f32::EPSILON);
             assert!((state.rows - 10.0).abs() < f32::EPSILON);
-            assert_eq!(state.double_buf.width(), 40);
-            assert_eq!(state.double_buf.height(), 10);
             assert!(state.output.is_some());
         });
         teardown();
@@ -3579,60 +2791,6 @@ mod tests {
         assert!(guard.is_none());
     }
 
-    #[test]
-    #[serial]
-    fn double_buffer_resizes_on_cols_rows_change() {
-        setup();
-        let buf = encode_create_node(1, r#"{"width":80,"height":24}"#);
-        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
-
-        // Change terminal size.
-        with_engine(|state| {
-            state.cols = 40.0;
-            state.rows = 10.0;
-            state.dirty = true;
-        });
-
-        render_frame();
-
-        with_engine(|state| {
-            assert_eq!(state.double_buf.width(), 40);
-            assert_eq!(state.double_buf.height(), 10);
-        });
-
-        teardown();
-    }
-
-    #[test]
-    #[serial]
-    fn text_ellipsis_truncates_with_ellipsis_char() {
-        setup();
-
-        let mut buf = encode_create_node(1, r#"{"width":80,"height":24,"flexDirection":"column"}"#);
-        buf.extend(encode_create_node(
-            2,
-            r#"{"width":8,"height":1,"textOverflow":"ellipsis"}"#,
-        ));
-        buf.extend(encode_append_child(1, 2));
-        buf.extend(encode_set_text(2, "Hello World"));
-        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
-
-        render_frame();
-
-        with_engine(|state| {
-            let back = state.double_buf.back();
-            let mut rendered = String::new();
-            for col in 0..8 {
-                if let Some(cell) = back.get(0, col) {
-                    rendered.push(cell.ch);
-                }
-            }
-            assert_eq!(rendered, "Hello W\u{2026}");
-        });
-
-        teardown();
-    }
-
     // -- Text decoration: underline, strikethrough, dim --
 
     #[test]
@@ -3668,251 +2826,6 @@ mod tests {
         let json = br#"{"textDecoration":"line-through"}"#;
         let vs = parse_visual_style_json(json);
         assert!(vs.strikethrough);
-    }
-
-    #[test]
-    #[serial]
-    fn underline_text_emits_sgr4() {
-        teardown();
-        unsafe { init_test_mode(20, 3, std::ptr::null_mut()) };
-
-        let mut buf = Vec::new();
-        // root node
-        buf.extend(encode_create_node(1, r#"{"width":20,"height":3}"#));
-        // child text node with underline
-        buf.extend(encode_create_node(
-            2,
-            r#"{"width":20,"height":1,"underline":true}"#,
-        ));
-        buf.extend(encode_set_text(2, "hello"));
-        buf.extend(encode_append_child(1, 2));
-        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
-        render_frame();
-
-        with_engine(|state| {
-            let cell = state.double_buf.back().get(0, 0).unwrap();
-            assert_eq!(cell.ch, 'h');
-            assert!(cell.style.underline, "cell should have underline set");
-            // Verify SGR 4 is emitted
-            let sgr = cell.style.to_sgr();
-            let sgr_str = String::from_utf8_lossy(&sgr);
-            assert!(
-                sgr_str.contains(";4"),
-                "SGR should contain ;4 for underline, got: {sgr_str}"
-            );
-        });
-
-        teardown();
-    }
-
-    #[test]
-    #[serial]
-    fn text_that_fits_is_not_ellipsized() {
-        setup();
-
-        let mut buf = encode_create_node(1, r#"{"width":80,"height":24,"flexDirection":"column"}"#);
-        buf.extend(encode_create_node(
-            2,
-            r#"{"width":8,"height":1,"textOverflow":"ellipsis"}"#,
-        ));
-        buf.extend(encode_append_child(1, 2));
-        buf.extend(encode_set_text(2, "Hi"));
-        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
-
-        render_frame();
-
-        with_engine(|state| {
-            let back = state.double_buf.back();
-            assert_eq!(back.get(0, 0).unwrap().ch, 'H');
-            assert_eq!(back.get(0, 1).unwrap().ch, 'i');
-            assert_eq!(back.get(0, 2).unwrap().ch, ' ');
-        });
-
-        teardown();
-    }
-
-    #[test]
-    #[serial]
-    fn overflow_hidden_clips_child_background() {
-        setup();
-
-        let buf = encode_create_node(1, r#"{"width":10,"height":1,"overflow":"hidden"}"#);
-        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
-
-        let buf = encode_create_node(
-            2,
-            r##"{"width":20,"height":1,"backgroundColor":"#ff0000","flexShrink":0}"##,
-        );
-        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
-
-        let buf = encode_append_child(1, 2);
-        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
-
-        with_engine(|state| {
-            state.root_node = Some(1);
-            state.dirty = true;
-        });
-
-        render_frame();
-
-        with_engine(|state| {
-            let back = state.double_buf.back();
-            for col in 0..10 {
-                let cell = back.get(0, col).unwrap();
-                assert_eq!(
-                    cell.style.bg,
-                    Some(crate::ansi::Color::Rgb(255, 0, 0)),
-                    "cell at col {col} should have red bg"
-                );
-            }
-            for col in 10..20 {
-                if let Some(cell) = back.get(0, col) {
-                    assert_ne!(
-                        cell.style.bg,
-                        Some(crate::ansi::Color::Rgb(255, 0, 0)),
-                        "cell at col {col} should NOT have red bg (clipped)"
-                    );
-                }
-            }
-        });
-
-        teardown();
-    }
-
-    #[test]
-    #[serial]
-    fn border_round_produces_corners() {
-        setup();
-        let mut buf = Vec::new();
-        buf.extend(encode_create_node(
-            1,
-            r#"{"width":80,"height":24,"flexDirection":"column"}"#,
-        ));
-        buf.extend(encode_create_node(
-            2,
-            r##"{"width":10,"height":5,"border":"round","borderColor":"#FF0000"}"##,
-        ));
-        buf.extend(encode_append_child(1, 2));
-        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
-
-        render_frame();
-
-        // Check the back buffer for border characters.
-        with_engine(|state| {
-            let back = state.double_buf.back();
-            // Top-left corner: round = ╭
-            assert_eq!(
-                back.get(0, 0).map(|c| c.ch),
-                Some('\u{256d}'),
-                "top-left should be ╭"
-            );
-            // Top-right corner: round = ╮
-            assert_eq!(
-                back.get(0, 9).map(|c| c.ch),
-                Some('\u{256e}'),
-                "top-right should be ╮"
-            );
-            // Bottom-left corner: round = ╰
-            assert_eq!(
-                back.get(4, 0).map(|c| c.ch),
-                Some('\u{2570}'),
-                "bottom-left should be ╰"
-            );
-            // Bottom-right corner: round = ╯
-            assert_eq!(
-                back.get(4, 9).map(|c| c.ch),
-                Some('\u{256f}'),
-                "bottom-right should be ╯"
-            );
-            // Top edge: ─
-            assert_eq!(
-                back.get(0, 1).map(|c| c.ch),
-                Some('\u{2500}'),
-                "top edge should be ─"
-            );
-            // Left edge: │
-            assert_eq!(
-                back.get(1, 0).map(|c| c.ch),
-                Some('\u{2502}'),
-                "left edge should be │"
-            );
-            // Border color should be red fg.
-            let corner_style = &back.get(0, 0).unwrap().style;
-            assert_eq!(
-                corner_style.fg,
-                Some(Color::Rgb(255, 0, 0)),
-                "border fg should be red"
-            );
-        });
-
-        teardown();
-    }
-
-    #[test]
-    #[serial]
-    fn strikethrough_text_emits_sgr9() {
-        teardown();
-        unsafe { init_test_mode(20, 3, std::ptr::null_mut()) };
-
-        let mut buf = Vec::new();
-        buf.extend(encode_create_node(1, r#"{"width":20,"height":3}"#));
-        buf.extend(encode_create_node(
-            2,
-            r#"{"width":20,"height":1,"strikethrough":true}"#,
-        ));
-        buf.extend(encode_set_text(2, "hello"));
-        buf.extend(encode_append_child(1, 2));
-        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
-        render_frame();
-
-        with_engine(|state| {
-            let cell = state.double_buf.back().get(0, 0).unwrap();
-            assert_eq!(cell.ch, 'h');
-            assert!(
-                cell.style.strikethrough,
-                "cell should have strikethrough set"
-            );
-            let sgr = cell.style.to_sgr();
-            let sgr_str = String::from_utf8_lossy(&sgr);
-            assert!(
-                sgr_str.contains(";9"),
-                "SGR should contain ;9 for strikethrough, got: {sgr_str}"
-            );
-        });
-
-        teardown();
-    }
-
-    #[test]
-    #[serial]
-    fn dim_text_emits_sgr2() {
-        teardown();
-        unsafe { init_test_mode(20, 3, std::ptr::null_mut()) };
-
-        let mut buf = Vec::new();
-        buf.extend(encode_create_node(1, r#"{"width":20,"height":3}"#));
-        buf.extend(encode_create_node(
-            2,
-            r#"{"width":20,"height":1,"dim":true}"#,
-        ));
-        buf.extend(encode_set_text(2, "hello"));
-        buf.extend(encode_append_child(1, 2));
-        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
-        render_frame();
-
-        with_engine(|state| {
-            let cell = state.double_buf.back().get(0, 0).unwrap();
-            assert_eq!(cell.ch, 'h');
-            assert!(cell.style.dim, "cell should have dim set");
-            let sgr = cell.style.to_sgr();
-            let sgr_str = String::from_utf8_lossy(&sgr);
-            assert!(
-                sgr_str.contains(";2"),
-                "SGR should contain ;2 for dim, got: {sgr_str}"
-            );
-        });
-
-        teardown();
     }
 
     // -- color_to_rgba tests ------------------------------------------------
@@ -4068,38 +2981,9 @@ mod tests {
         teardown();
     }
 
-    #[test]
-    #[serial]
-    fn border_radius_zero_produces_no_pixel_output() {
-        setup();
-        let mut buf = Vec::new();
-        buf.extend(encode_create_node(
-            1,
-            r##"{"width":80,"height":24,"flexDirection":"column"}"##,
-        ));
-        buf.extend(encode_create_node(
-            2,
-            r##"{"width":10,"height":3,"backgroundColor":"#1e293b","borderRadius":0}"##,
-        ));
-        buf.extend(encode_append_child(1, 2));
-        unsafe { apply_mutations(buf.as_ptr(), buf.len() as u32) };
-
-        render_frame();
-
-        with_engine(|state| {
-            let output = state
-                .output
-                .as_ref()
-                .expect("test mode should capture output");
-            let text = String::from_utf8_lossy(output);
-            // No Kitty graphics when borderRadius is 0.
-            assert!(
-                !text.contains("\x1b_G"),
-                "output should NOT contain Kitty graphics APC when borderRadius is 0"
-            );
-        });
-        teardown();
-    }
+    // `border_radius_zero_produces_no_pixel_output` removed (issue #156).
+    // With the cell path gone, the pixel renderer always runs.  The test's
+    // premise (no Kitty graphics when borderRadius is 0) no longer applies.
 
     #[test]
     #[serial]
@@ -4135,7 +3019,7 @@ mod tests {
     fn gradient_pixel_canvas_produces_nonuniform_pixels() {
         let grad = parse_linear_gradient("linear-gradient(90deg, #000000, #ffffff)")
             .expect("parse gradient");
-        let mut canvas = PixelCanvas::new(80, 16);
+        let mut canvas = crate::pixel_canvas::PixelCanvas::new(80, 16);
         let stops: Vec<(f32, [u8; 4])> = grad.stops.iter().map(|s| (s.position, s.color)).collect();
         canvas.fill_linear_gradient(0.0, 0.0, 80.0, 16.0, 0.0, &stops);
         // Left side should be dark, right side should be bright
