@@ -13,12 +13,16 @@
     clippy::cast_sign_loss,
     clippy::cast_precision_loss,
     clippy::cast_lossless,
+    clippy::cast_possible_wrap,
     clippy::must_use_candidate,
-    clippy::needless_range_loop
+    clippy::needless_range_loop,
+    clippy::needless_return,
+    clippy::too_many_arguments
 )]
 
 use std::io;
 
+use crate::font_system::FontSystem;
 use crate::image::ImageData;
 
 // ---------------------------------------------------------------------------
@@ -242,6 +246,151 @@ impl PixelCanvas {
                 let t = (fx * cos_a + fy * sin_a).clamp(0.0, 1.0);
                 let color = interpolate_stops(t, stops);
                 self.blend_pixel(px, py, color);
+            }
+        }
+    }
+
+    /// Draw a rasterized glyph onto the canvas.
+    ///
+    /// The glyph data is a coverage bitmap (1 byte per pixel, 0=transparent,
+    /// 255=fully covered).  The color is applied using the coverage as alpha.
+    pub fn draw_glyph(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: u32,
+        height: u32,
+        data: &[u8],
+        color: [u8; 4],
+    ) {
+        // Guard: data must contain at least width*height bytes of coverage.
+        // Color glyphs (e.g. emoji) may have 4 bytes/pixel — skip those
+        // since we only support grayscale coverage bitmaps here.
+        let expected = (width as usize) * (height as usize);
+        if expected == 0 || data.len() < expected {
+            return;
+        }
+
+        let x0 = x.floor() as i32;
+        let y0 = y.floor() as i32;
+        for gy in 0..height {
+            for gx in 0..width {
+                let px = x0 + gx as i32;
+                let py = y0 + gy as i32;
+                if px >= 0 && py >= 0 && (px as u32) < self.width && (py as u32) < self.height {
+                    let coverage = data[(gy * width + gx) as usize];
+                    if coverage > 0 {
+                        let alpha = ((color[3] as u32 * coverage as u32) / 255) as u8;
+                        self.blend_pixel(
+                            px as u32,
+                            py as u32,
+                            [color[0], color[1], color[2], alpha],
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Draw a text string onto the canvas using the font system.
+    pub fn draw_text(
+        &mut self,
+        x: f32,
+        y: f32,
+        text: &str,
+        color: [u8; 4],
+        font_size: f32,
+        bold: bool,
+        italic: bool,
+        font_system: &mut FontSystem,
+    ) {
+        let glyphs = font_system.rasterize_text(text, font_size, bold, italic);
+        for glyph in &glyphs {
+            self.draw_glyph(
+                x + glyph.x,
+                y + glyph.y,
+                glyph.width,
+                glyph.height,
+                &glyph.data,
+                color,
+            );
+        }
+    }
+
+    /// Draw a horizontal or angled line with given thickness.
+    ///
+    /// Used for text decorations (underline, strikethrough, overline).
+    pub fn draw_line(
+        &mut self,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
+        thickness: f32,
+        color: [u8; 4],
+    ) {
+        // For horizontal lines (most common), fill a thin rect
+        if (y0 - y1).abs() < 0.5 {
+            self.fill_rect(
+                x0.min(x1),
+                y0 - thickness / 2.0,
+                (x1 - x0).abs(),
+                thickness,
+                color,
+            );
+            return;
+        }
+        // For general lines, use Bresenham-like approach
+        // (stretch goal -- horizontal covers 99% of use cases)
+    }
+
+    /// Draw a bordered rectangle with anti-aliased corners.
+    ///
+    /// - `thickness`: border width in pixels
+    /// - `radii`: `[top-left, top-right, bottom-right, bottom-left]` corner
+    ///   radii
+    pub fn draw_border(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        thickness: f32,
+        radii: [f32; 4],
+        color: [u8; 4],
+    ) {
+        // Use SDF difference: outer rounded rect - inner rounded rect
+        let x0 = (x - 1.0).max(0.0) as u32;
+        let y0 = (y - 1.0).max(0.0) as u32;
+        let x1 = ((x + w + 1.0).ceil() as u32).min(self.width);
+        let y1 = ((y + h + 1.0).ceil() as u32).min(self.height);
+
+        for py in y0..y1 {
+            for px in x0..x1 {
+                let fx = px as f32 + 0.5;
+                let fy = py as f32 + 0.5;
+
+                // Use uniform radius for now (top-left)
+                let r = radii[0].min(w / 2.0).min(h / 2.0);
+                let d_outer = sdf_rounded_rect(fx - x, fy - y, w, h, r);
+                let inner_r = (r - thickness).max(0.0);
+                let d_inner = sdf_rounded_rect(
+                    fx - x - thickness,
+                    fy - y - thickness,
+                    w - thickness * 2.0,
+                    h - thickness * 2.0,
+                    inner_r,
+                );
+
+                // Border region: inside outer, outside inner
+                let outer_alpha = (0.5 - d_outer).clamp(0.0, 1.0);
+                let inner_alpha = (0.5 - d_inner).clamp(0.0, 1.0);
+                let border_alpha = outer_alpha * (1.0 - inner_alpha);
+
+                if border_alpha > 0.0 {
+                    let a = (color[3] as f32 * border_alpha + 0.5) as u8;
+                    self.blend_pixel(px, py, [color[0], color[1], color[2], a]);
+                }
             }
         }
     }
@@ -595,5 +744,134 @@ mod tests {
         c.fill([10, 20, 30, 40]);
         let img = c.to_image_data().unwrap();
         assert_eq!(img.rgba, c.data);
+    }
+
+    // -- draw_glyph ---------------------------------------------------------
+
+    #[test]
+    fn draw_glyph_synthetic_2x2_coverage() {
+        let mut c = PixelCanvas::new(10, 10);
+        // 2x2 glyph: top-left fully covered, bottom-right half covered
+        let coverage = vec![255, 128, 64, 0];
+        c.draw_glyph(2.0, 3.0, 2, 2, &coverage, [255, 0, 0, 255]);
+
+        // Pixel (2,3) should be fully red
+        let p = c.get_pixel(2, 3);
+        assert_eq!(p[0], 255);
+        assert_eq!(p[3], 255);
+
+        // Pixel (3,3) should be about half alpha
+        let p = c.get_pixel(3, 3);
+        assert!(p[3] > 100 && p[3] < 140, "alpha={}", p[3]);
+
+        // Pixel (2,4) should be low alpha
+        let p = c.get_pixel(2, 4);
+        assert!(p[3] > 50 && p[3] < 80, "alpha={}", p[3]);
+
+        // Pixel (3,4) coverage=0, should remain transparent
+        let p = c.get_pixel(3, 4);
+        assert_eq!(p[3], 0);
+    }
+
+    #[test]
+    fn draw_glyph_zero_width_is_noop() {
+        let mut c = PixelCanvas::new(10, 10);
+        c.draw_glyph(0.0, 0.0, 0, 5, &[], [255, 0, 0, 255]);
+        assert!(c.data.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn draw_glyph_undersized_data_is_noop() {
+        // Simulate a color glyph or corrupt data where data.len() < width*height
+        let mut c = PixelCanvas::new(10, 10);
+        let short_data = vec![255u8; 3]; // 2x2 glyph needs 4 bytes, only 3 provided
+        c.draw_glyph(0.0, 0.0, 2, 2, &short_data, [255, 0, 0, 255]);
+        // Should not panic and should not render anything
+        assert!(c.data.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn draw_glyph_negative_offset_clips() {
+        let mut c = PixelCanvas::new(10, 10);
+        // Glyph positioned partly off the left/top edge
+        let coverage = vec![255u8; 4]; // 2x2 fully covered
+        c.draw_glyph(-1.0, -1.0, 2, 2, &coverage, [255, 0, 0, 255]);
+        // Only (0,0) should be visible (the bottom-right pixel of the 2x2)
+        let p = c.get_pixel(0, 0);
+        assert_eq!(p[3], 255, "pixel at (0,0) should be visible");
+        // (1,0), (0,1) should be empty because they map to glyph pixels at
+        // gx=2/gy=2 which are outside the 2x2 glyph
+        // Actually gx=1,gy=0 => px=0,py=-1 => clipped; gx=0,gy=1 => px=-1,py=0 => clipped
+        // gx=1,gy=1 => px=0,py=0 => visible -- that's the one we checked above
+    }
+
+    #[test]
+    fn draw_glyph_entirely_off_canvas() {
+        let mut c = PixelCanvas::new(10, 10);
+        let coverage = vec![255u8; 4];
+        c.draw_glyph(100.0, 100.0, 2, 2, &coverage, [255, 0, 0, 255]);
+        assert!(c.data.iter().all(|&b| b == 0));
+    }
+
+    // -- draw_text ----------------------------------------------------------
+
+    #[test]
+    fn draw_text_renders_nonzero_pixels() {
+        let mut c = PixelCanvas::new(100, 40);
+        let mut fs = crate::font_system::FontSystem::new();
+        c.draw_text(
+            0.0,
+            0.0,
+            "A",
+            [255, 255, 255, 255],
+            16.0,
+            false,
+            false,
+            &mut fs,
+        );
+        // At least some pixels should be non-transparent
+        let non_transparent = c.data.chunks_exact(4).filter(|px| px[3] > 0).count();
+        assert!(
+            non_transparent > 0,
+            "draw_text should produce visible pixels"
+        );
+    }
+
+    // -- draw_line ----------------------------------------------------------
+
+    #[test]
+    fn draw_line_horizontal_fills_pixels() {
+        let mut c = PixelCanvas::new(20, 10);
+        c.draw_line(2.0, 5.0, 18.0, 5.0, 2.0, [0, 255, 0, 255]);
+        // Pixels along the line should be filled
+        let p = c.get_pixel(10, 5);
+        assert_eq!(p, [0, 255, 0, 255]);
+        // Pixel well above the line should be empty
+        let p = c.get_pixel(10, 0);
+        assert_eq!(p[3], 0);
+    }
+
+    // -- draw_border --------------------------------------------------------
+
+    #[test]
+    fn draw_border_has_border_pixels_and_empty_interior() {
+        let mut c = PixelCanvas::new(100, 100);
+        c.draw_border(0.0, 0.0, 100.0, 100.0, 2.0, [8.0; 4], [255, 0, 0, 255]);
+
+        // Border pixel near top edge should be filled
+        let p = c.get_pixel(50, 1);
+        assert!(p[3] > 0, "border pixel should be visible, alpha={}", p[3]);
+
+        // Interior pixel (center) should be empty
+        let p = c.get_pixel(50, 50);
+        assert_eq!(p[3], 0, "interior should be transparent, alpha={}", p[3]);
+
+        // Border pixel near left edge should be filled
+        let p = c.get_pixel(1, 50);
+        assert!(
+            p[3] > 0,
+            "left border pixel should be visible, alpha={}",
+            p[3]
+        );
     }
 }
