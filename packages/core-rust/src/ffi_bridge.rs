@@ -228,6 +228,9 @@ struct EngineState {
     cell_rows: Option<u32>,
     /// Pixel renderer for full-frame Kitty graphics output.
     pixel_renderer: Option<PixelRenderer>,
+    /// Pre-loaded font system -- created eagerly on the main thread so that
+    /// system font file reads don't hang in headless / background processes.
+    font_system: Option<crate::font_system::FontSystem>,
 }
 
 impl EngineState {
@@ -255,6 +258,7 @@ impl EngineState {
             cell_cols: None,
             cell_rows: None,
             pixel_renderer: None,
+            font_system: Some(crate::font_system::FontSystem::new()),
         }
     }
 
@@ -1863,12 +1867,21 @@ pub extern "C" fn render_frame() {
                 if state.pixel_renderer.is_none() {
                     let cell_w = state.terminal_caps.cell_pixel_width;
                     let cell_h = state.terminal_caps.cell_pixel_height;
-                    state.pixel_renderer = Some(PixelRenderer::new(
-                        state.cols as u32,
-                        state.rows as u32,
-                        cell_w,
-                        cell_h,
-                    ));
+                    // Use the pre-loaded font system (created eagerly on the
+                    // main thread) to avoid blocking on system font file reads
+                    // which can hang in headless / background processes.
+                    let fs = state
+                        .font_system
+                        .take()
+                        .unwrap_or_else(crate::font_system::FontSystem::new);
+                    state.pixel_renderer =
+                        Some(PixelRenderer::new_with_font_system(
+                            state.cols as u32,
+                            state.rows as u32,
+                            cell_w,
+                            cell_h,
+                            fs,
+                        ));
                 }
 
                 if let Some(mut pr) = state.pixel_renderer.take() {
