@@ -2039,6 +2039,17 @@ pub extern "C" fn render_frame() {
                 RenderMode::Cell => false,
             };
 
+            // Allow env var override for render mode
+            let use_pixel = if let Ok(mode) = std::env::var("KITTYUI_RENDER_MODE") {
+                match mode.as_str() {
+                    "pixel" => true,
+                    "cell" => false,
+                    _ => use_pixel, // "auto" keeps the detected value
+                }
+            } else {
+                use_pixel
+            };
+
             if use_pixel {
                 // ---- Full-frame pixel rendering path ----
 
