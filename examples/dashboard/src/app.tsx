@@ -53,7 +53,7 @@ const cardStyle: CSSStyle = {
   backgroundColor: t.card,
   borderRadius: 16,
   borderColor: "#27272a",
-  padding: [1, 2] as [number, number],
+  padding: [2, 3] as [number, number],
   flexDirection: "column" as const,
 };
 
@@ -74,9 +74,10 @@ function Header({ active }: { active: Tab }) {
         alignItems: "center",
         padding: [0, 2],
         gap: 3,
+        backgroundColor: t.card,
       }}
     >
-      <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 20 }}>
+      <Text style={{ color: t.foreground, fontWeight: "bold" }}>
         {"Dashboard"}
       </Text>
       <Box style={{ flexDirection: "row", gap: 2 }}>
@@ -98,7 +99,6 @@ function Header({ active }: { active: Tab }) {
                   color: isActive ? t.foreground : t.mutedFg,
                   fontWeight: isActive ? "bold" : "normal",
                   textDecoration: isActive ? "underline" : "none",
-                  fontSize: 14,
                 }}
               >
                 {tab}
@@ -146,11 +146,11 @@ function MetricCard({
   return (
     <Box style={{ ...cardStyle, flexGrow: 1, minWidth: 18, height: 6, gap: 0 }}>
       <Box style={{ flexDirection: "row", justifyContent: "space-between" }}>
-        <Text style={{ color: t.mutedFg, fontSize: 12 }}>{title}</Text>
-        <Text style={{ color: t.mutedFg, fontSize: 12 }}>{icon}</Text>
+        <Text style={{ color: t.mutedFg }}>{title}</Text>
+        <Text style={{ color: t.mutedFg }}>{icon}</Text>
       </Box>
-      <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 20 }}>{value}</Text>
-      <Text style={{ color: t.zinc500, fontSize: 10 }}>{description}</Text>
+      <Text style={{ color: t.foreground, fontWeight: "bold" }}>{value}</Text>
+      <Text style={{ color: t.zinc500 }}>{description}</Text>
     </Box>
   );
 }
@@ -180,7 +180,7 @@ function RevenueChartCard() {
 
   return (
     <Box style={{ ...cardStyle, flexGrow: 2, gap: 1 }}>
-      <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 24 }}>{"Overview"}</Text>
+      <Text style={{ color: t.foreground, fontWeight: "bold" }}>{"Overview"}</Text>
 
       {/* Chart area -- bars rendered via backgroundColor + height */}
       <Box style={{ flexDirection: "row", alignItems: "end", gap: 1, height: barMaxHeight }}>
@@ -212,7 +212,7 @@ function RevenueChartCard() {
       <Box style={{ flexDirection: "row", gap: 1 }}>
         {MONTHLY_REVENUE.map((m) => (
           <Box key={m.month} style={{ flexGrow: 1, width: 4 }}>
-            <Text style={{ color: t.mutedFg, fontSize: 10 }}>{m.month}</Text>
+            <Text style={{ color: t.mutedFg }}>{m.month}</Text>
           </Box>
         ))}
       </Box>
@@ -236,7 +236,7 @@ function Avatar({ initials, color }: { initials: string; color: string }) {
         alignItems: "center",
       }}
     >
-      <Text style={{ color: "#fafafa", fontWeight: "bold", fontSize: 12 }}>{initials}</Text>
+      <Text style={{ color: "#fafafa", fontWeight: "bold" }}>{initials}</Text>
     </Box>
   );
 }
@@ -273,10 +273,10 @@ function SaleRow({ sale }: { sale: Sale }) {
     >
       <Avatar initials={sale.initials} color={avatarColor} />
       <Box style={{ flexDirection: "column", flexGrow: 1 }}>
-        <Text style={{ color: t.foreground, fontSize: 14 }}>{sale.name}</Text>
-        <Text style={{ color: t.mutedFg, fontSize: 10 }}>{sale.email}</Text>
+        <Text style={{ color: t.foreground }}>{sale.name}</Text>
+        <Text style={{ color: t.mutedFg }}>{sale.email}</Text>
       </Box>
-      <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 14 }}>{sale.amount}</Text>
+      <Text style={{ color: t.foreground, fontWeight: "bold" }}>{sale.amount}</Text>
     </Box>
   );
 }
@@ -284,8 +284,8 @@ function SaleRow({ sale }: { sale: Sale }) {
 function RecentSalesCard() {
   return (
     <Box style={{ ...cardStyle, flexGrow: 1, gap: 1, padding: [2, 3] as [number, number] }}>
-      <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 24 }}>{"Recent Sales"}</Text>
-      <Text style={{ color: t.zinc500, fontSize: 10 }}>
+      <Text style={{ color: t.foreground, fontWeight: "bold" }}>{"Recent Sales"}</Text>
+      <Text style={{ color: t.zinc500 }}>
         {"You made 265 sales this month."}
       </Text>
       {RECENT_SALES.map((sale) => (
@@ -346,44 +346,44 @@ function OverviewPage() {
 function AnalyticsPage() {
   return (
     <Box style={{ flexDirection: "column", flexGrow: 1, padding: [2, 3], gap: 2 }}>
-      <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 20 }}>
+      <Text style={{ color: t.foreground, fontWeight: "bold" }}>
         {"Analytics"}
       </Text>
       <Box style={{ flexDirection: "row", gap: 2 }}>
         <Box style={{ ...cardStyle, flexGrow: 1 }}>
-          <Text style={{ color: t.mutedFg, fontSize: 12 }}>{"Page Views"}</Text>
-          <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 20 }}>{"128,430"}</Text>
-          <Text style={{ color: t.zinc500, fontSize: 10 }}>{"Last 30 days"}</Text>
+          <Text style={{ color: t.mutedFg }}>{"Page Views"}</Text>
+          <Text style={{ color: t.foreground, fontWeight: "bold" }}>{"128,430"}</Text>
+          <Text style={{ color: t.zinc500 }}>{"Last 30 days"}</Text>
         </Box>
         <Box style={{ ...cardStyle, flexGrow: 1 }}>
-          <Text style={{ color: t.mutedFg, fontSize: 12 }}>{"Unique Visitors"}</Text>
-          <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 20 }}>{"42,891"}</Text>
-          <Text style={{ color: t.zinc500, fontSize: 10 }}>{"Last 30 days"}</Text>
+          <Text style={{ color: t.mutedFg }}>{"Unique Visitors"}</Text>
+          <Text style={{ color: t.foreground, fontWeight: "bold" }}>{"42,891"}</Text>
+          <Text style={{ color: t.zinc500 }}>{"Last 30 days"}</Text>
         </Box>
         <Box style={{ ...cardStyle, flexGrow: 1 }}>
-          <Text style={{ color: t.mutedFg, fontSize: 12 }}>{"Bounce Rate"}</Text>
-          <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 20 }}>{"24.3%"}</Text>
-          <Text style={{ color: t.zinc500, fontSize: 10 }}>{"Down 5.2%"}</Text>
+          <Text style={{ color: t.mutedFg }}>{"Bounce Rate"}</Text>
+          <Text style={{ color: t.foreground, fontWeight: "bold" }}>{"24.3%"}</Text>
+          <Text style={{ color: t.zinc500 }}>{"Down 5.2%"}</Text>
         </Box>
       </Box>
       <Box style={{ ...cardStyle, flexGrow: 1 }}>
-        <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 14 }}>{"Top Pages"}</Text>
+        <Text style={{ color: t.foreground, fontWeight: "bold" }}>{"Top Pages"}</Text>
         <Box style={{ flexDirection: "column", marginTop: 1, gap: 1 }}>
           <Box style={{ flexDirection: "row" }}>
-            <Box style={{ width: 30 }}><Text style={{ color: t.foreground, fontSize: 12 }}>{"/dashboard"}</Text></Box>
-            <Text style={{ color: t.mutedFg, fontSize: 12 }}>{"12,483 views"}</Text>
+            <Box style={{ width: 30 }}><Text style={{ color: t.foreground }}>{"/dashboard"}</Text></Box>
+            <Text style={{ color: t.mutedFg }}>{"12,483 views"}</Text>
           </Box>
           <Box style={{ flexDirection: "row" }}>
-            <Box style={{ width: 30 }}><Text style={{ color: t.foreground, fontSize: 12 }}>{"/settings"}</Text></Box>
-            <Text style={{ color: t.mutedFg, fontSize: 12 }}>{"8,291 views"}</Text>
+            <Box style={{ width: 30 }}><Text style={{ color: t.foreground }}>{"/settings"}</Text></Box>
+            <Text style={{ color: t.mutedFg }}>{"8,291 views"}</Text>
           </Box>
           <Box style={{ flexDirection: "row" }}>
-            <Box style={{ width: 30 }}><Text style={{ color: t.foreground, fontSize: 12 }}>{"/api/docs"}</Text></Box>
-            <Text style={{ color: t.mutedFg, fontSize: 12 }}>{"6,104 views"}</Text>
+            <Box style={{ width: 30 }}><Text style={{ color: t.foreground }}>{"/api/docs"}</Text></Box>
+            <Text style={{ color: t.mutedFg }}>{"6,104 views"}</Text>
           </Box>
           <Box style={{ flexDirection: "row" }}>
-            <Box style={{ width: 30 }}><Text style={{ color: t.foreground, fontSize: 12 }}>{"/billing"}</Text></Box>
-            <Text style={{ color: t.mutedFg, fontSize: 12 }}>{"4,872 views"}</Text>
+            <Box style={{ width: 30 }}><Text style={{ color: t.foreground }}>{"/billing"}</Text></Box>
+            <Text style={{ color: t.mutedFg }}>{"4,872 views"}</Text>
           </Box>
         </Box>
       </Box>
@@ -398,40 +398,40 @@ function AnalyticsPage() {
 function ReportsPage() {
   return (
     <Box style={{ flexDirection: "column", flexGrow: 1, padding: [2, 3], gap: 2 }}>
-      <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 20 }}>
+      <Text style={{ color: t.foreground, fontWeight: "bold" }}>
         {"Reports"}
       </Text>
       <Box style={{ ...cardStyle }}>
-        <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 14 }}>{"System Status"}</Text>
+        <Text style={{ color: t.foreground, fontWeight: "bold" }}>{"System Status"}</Text>
         <Box style={{ flexDirection: "column", marginTop: 1, gap: 1 }}>
           <Box style={{ flexDirection: "row" }}>
-            <Box style={{ width: 24 }}><Text style={{ color: t.foreground, fontSize: 12 }}>{"API Gateway"}</Text></Box>
-            <Text style={{ color: "#22c55e", fontSize: 12 }}>{"Operational"}</Text>
+            <Box style={{ width: 24 }}><Text style={{ color: t.foreground }}>{"API Gateway"}</Text></Box>
+            <Text style={{ color: "#22c55e" }}>{"Operational"}</Text>
           </Box>
           <Box style={{ flexDirection: "row" }}>
-            <Box style={{ width: 24 }}><Text style={{ color: t.foreground, fontSize: 12 }}>{"Database"}</Text></Box>
-            <Text style={{ color: "#22c55e", fontSize: 12 }}>{"Operational"}</Text>
+            <Box style={{ width: 24 }}><Text style={{ color: t.foreground }}>{"Database"}</Text></Box>
+            <Text style={{ color: "#22c55e" }}>{"Operational"}</Text>
           </Box>
           <Box style={{ flexDirection: "row" }}>
-            <Box style={{ width: 24 }}><Text style={{ color: t.foreground, fontSize: 12 }}>{"Payment Service"}</Text></Box>
-            <Text style={{ color: "#eab308", fontSize: 12 }}>{"Degraded"}</Text>
+            <Box style={{ width: 24 }}><Text style={{ color: t.foreground }}>{"Payment Service"}</Text></Box>
+            <Text style={{ color: "#eab308" }}>{"Degraded"}</Text>
           </Box>
           <Box style={{ flexDirection: "row" }}>
-            <Box style={{ width: 24 }}><Text style={{ color: t.foreground, fontSize: 12 }}>{"CDN"}</Text></Box>
-            <Text style={{ color: "#22c55e", fontSize: 12 }}>{"Operational"}</Text>
+            <Box style={{ width: 24 }}><Text style={{ color: t.foreground }}>{"CDN"}</Text></Box>
+            <Text style={{ color: "#22c55e" }}>{"Operational"}</Text>
           </Box>
         </Box>
       </Box>
       <Box style={{ ...cardStyle }}>
-        <Text style={{ color: t.foreground, fontWeight: "bold", fontSize: 14 }}>{"Recent Incidents"}</Text>
+        <Text style={{ color: t.foreground, fontWeight: "bold" }}>{"Recent Incidents"}</Text>
         <Box style={{ flexDirection: "column", marginTop: 1, gap: 1 }}>
           <Box style={{ flexDirection: "column" }}>
-            <Text style={{ color: t.foreground, fontSize: 12 }}>{"Payment processing delay"}</Text>
-            <Text style={{ color: t.zinc500, fontSize: 10 }}>{"Mar 28, 2026 - Resolved in 45 minutes"}</Text>
+            <Text style={{ color: t.foreground }}>{"Payment processing delay"}</Text>
+            <Text style={{ color: t.zinc500 }}>{"Mar 28, 2026 - Resolved in 45 minutes"}</Text>
           </Box>
           <Box style={{ flexDirection: "column" }}>
-            <Text style={{ color: t.foreground, fontSize: 12 }}>{"CDN cache invalidation issue"}</Text>
-            <Text style={{ color: t.zinc500, fontSize: 10 }}>{"Mar 25, 2026 - Resolved in 12 minutes"}</Text>
+            <Text style={{ color: t.foreground }}>{"CDN cache invalidation issue"}</Text>
+            <Text style={{ color: t.zinc500 }}>{"Mar 25, 2026 - Resolved in 12 minutes"}</Text>
           </Box>
         </Box>
       </Box>
@@ -454,7 +454,7 @@ function Footer() {
         gap: 2,
       }}
     >
-      <Text style={{ color: t.mutedFg, fontSize: 10 }}>
+      <Text style={{ color: t.mutedFg }}>
         {"<-/-> navigate tabs   q quit"}
       </Text>
       <Box style={{ flexGrow: 1 }} />
