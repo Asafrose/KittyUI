@@ -278,7 +278,7 @@ struct GradientImage {
 
 impl EngineState {
     fn new() -> Self {
-        let mut this = Self {
+        Self {
             layout: LayoutTree::new(),
             node_map: HashMap::new(),
             text_content: HashMap::new(),
@@ -306,19 +306,7 @@ impl EngineState {
             shadow_images_pending: Vec::new(),
             pixel_renderer: None,
             render_mode: RenderMode::default(),
-        };
-
-        // Allow overriding render mode via KITTYUI_RENDER_MODE env var.
-        // This lets users force pixel or cell mode without passing flags.
-        if let Ok(mode) = std::env::var("KITTYUI_RENDER_MODE") {
-            match mode.as_str() {
-                "pixel" => this.render_mode = RenderMode::Pixel,
-                "cell" => this.render_mode = RenderMode::Cell,
-                _ => {} // "auto" or anything else keeps default
-            }
         }
-
-        this
     }
 
     /// Look up the user-facing u32 id for a layout node id.
