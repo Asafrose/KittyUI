@@ -19,6 +19,7 @@ pub mod layout;
 pub mod mock_terminal;
 pub mod mouse;
 pub mod pixel_canvas;
+pub mod pixel_renderer;
 pub mod raw_mode;
 pub mod render_loop;
 pub mod screen;
