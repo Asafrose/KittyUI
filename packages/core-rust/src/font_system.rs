@@ -1,13 +1,16 @@
-//! Font subsystem powered by `cosmic-text` for text measurement and glyph
+//! Font subsystem powered by `fontdue` for text measurement and glyph
 //! rasterization.
 //!
-//! [`FontSystem`] wraps a `cosmic_text::FontSystem` (which discovers system
-//! fonts automatically) and a `SwashCache` for glyph rasterization.  It
-//! exposes two main operations:
+//! [`FontSystem`] loads system sans-serif fonts (Arial on macOS, Liberation
+//! Sans on Linux) and rasterizes individual glyphs.  It exposes two main
+//! operations:
 //!
-//! - **measure** — compute the pixel dimensions of a shaped text run.
-//! - **rasterize** — produce positioned coverage bitmaps for compositing
+//! - **measure** -- compute the pixel dimensions of a text run.
+//! - **rasterize** -- produce positioned coverage bitmaps for compositing
 //!   onto a [`crate::pixel_canvas::PixelCanvas`].
+//!
+//! This replaces the previous `cosmic-text` backend which hangs on macOS
+//! when using any non-Monospace font family.
 
 // Glyph positioning math uses many short variable names and numeric casts.
 #![allow(
@@ -17,24 +20,83 @@
     clippy::cast_lossless
 )]
 
-use cosmic_text::{
-    Attrs, Buffer, Family, FontSystem as CosmicFontSystem, Metrics, Shaping, SwashCache,
-    SwashContent, Weight,
-};
+use fontdue::{Font, FontSettings};
 
 /// Manages font loading, text measurement, and glyph rasterization.
 pub struct FontSystem {
-    font_system: CosmicFontSystem,
-    swash_cache: SwashCache,
+    sans_regular: Option<Font>,
+    sans_bold: Option<Font>,
+    mono_regular: Option<Font>,
 }
+
+/// System font search paths for sans-serif regular.
+const SANS_REGULAR_PATHS: &[&str] = &[
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/TTF/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans.ttf",
+];
+
+/// System font search paths for sans-serif bold.
+const SANS_BOLD_PATHS: &[&str] = &[
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/TTF/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+];
+
+/// System font search paths for monospace.
+const MONO_PATHS: &[&str] = &[
+    "/System/Library/Fonts/Supplemental/Courier New.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+    "/usr/share/fonts/TTF/LiberationMono-Regular.ttf",
+    "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+];
 
 impl FontSystem {
     /// Create a new font system with system fonts loaded.
     #[must_use]
     pub fn new() -> Self {
+        let sans_regular = Self::load_font(SANS_REGULAR_PATHS);
+        let sans_bold = Self::load_font(SANS_BOLD_PATHS);
+        let mono_regular = Self::load_font(MONO_PATHS);
+
         Self {
-            font_system: CosmicFontSystem::new(),
-            swash_cache: SwashCache::new(),
+            sans_regular,
+            sans_bold,
+            mono_regular,
+        }
+    }
+
+    /// Try loading a font from the first readable path in the list.
+    fn load_font(paths: &[&str]) -> Option<Font> {
+        for path in paths {
+            if let Ok(data) = std::fs::read(path) {
+                let settings = FontSettings {
+                    collection_index: 0,
+                    scale: 40.0,
+                    ..FontSettings::default()
+                };
+                if let Ok(font) = Font::from_bytes(data, settings) {
+                    return Some(font);
+                }
+            }
+        }
+        None
+    }
+
+    /// Pick the appropriate font for the given style.
+    fn pick_font(&self, bold: bool) -> Option<&Font> {
+        if bold {
+            self.sans_bold
+                .as_ref()
+                .or(self.sans_regular.as_ref())
+                .or(self.mono_regular.as_ref())
+        } else {
+            self.sans_regular.as_ref().or(self.mono_regular.as_ref())
         }
     }
 
@@ -47,33 +109,19 @@ impl FontSystem {
         text: &str,
         font_size: f32,
         bold: bool,
-        italic: bool,
+        _italic: bool,
     ) -> (f32, f32) {
-        let metrics = Metrics::new(font_size, font_size * 1.2);
-        let mut buffer = Buffer::new(&mut self.font_system, metrics);
-
-        let weight = if bold { Weight::BOLD } else { Weight::NORMAL };
-        let style = if italic {
-            cosmic_text::Style::Italic
-        } else {
-            cosmic_text::Style::Normal
+        let Some(font) = self.pick_font(bold) else {
+            return (text.len() as f32 * font_size * 0.6, font_size);
         };
-        let attrs = Attrs::new()
-            .family(Family::Monospace)
-            .weight(weight)
-            .style(style);
 
-        buffer.set_text(&mut self.font_system, text, attrs, Shaping::Advanced);
-        buffer.shape_until_scroll(&mut self.font_system, false);
+        let mut width = 0.0f32;
+        for ch in text.chars() {
+            let metrics = font.metrics(ch, font_size);
+            width += metrics.advance_width;
+        }
 
-        let width = buffer
-            .layout_runs()
-            .flat_map(|run| run.glyphs.iter())
-            .map(|g| g.x + g.w)
-            .fold(0.0f32, f32::max);
-        let height = buffer.layout_runs().map(|run| run.line_height).sum::<f32>();
-
-        (width.max(0.0), height.max(font_size))
+        (width.max(0.0), font_size.max(font_size))
     }
 
     /// Rasterize text and return positioned glyphs with their coverage
@@ -87,58 +135,38 @@ impl FontSystem {
         text: &str,
         font_size: f32,
         bold: bool,
-        italic: bool,
+        _italic: bool,
     ) -> Vec<RasterizedGlyph> {
-        let metrics = Metrics::new(font_size, font_size * 1.2);
-        let mut buffer = Buffer::new(&mut self.font_system, metrics);
-
-        let weight = if bold { Weight::BOLD } else { Weight::NORMAL };
-        let style = if italic {
-            cosmic_text::Style::Italic
-        } else {
-            cosmic_text::Style::Normal
+        let Some(font) = self.pick_font(bold) else {
+            return Vec::new();
         };
-        let attrs = Attrs::new()
-            .family(Family::Monospace)
-            .weight(weight)
-            .style(style);
 
-        buffer.set_text(&mut self.font_system, text, attrs, Shaping::Advanced);
-        buffer.shape_until_scroll(&mut self.font_system, false);
+        // Compute ascent from the font's line metrics for proper baseline
+        // positioning.
+        let line_metrics = font.horizontal_line_metrics(font_size);
+        let ascent = line_metrics.map_or(font_size * 0.8, |lm| lm.ascent);
 
         let mut glyphs = Vec::new();
+        let mut x = 0.0f32;
 
-        for run in buffer.layout_runs() {
-            for glyph in run.glyphs {
-                let physical = glyph.physical((0., 0.), 1.0);
+        for ch in text.chars() {
+            let (metrics, bitmap) = font.rasterize(ch, font_size);
 
-                if let Some(image) = self
-                    .swash_cache
-                    .get_image(&mut self.font_system, physical.cache_key)
-                {
-                    let content = match image.content {
-                        SwashContent::Mask => GlyphContent::Mask,
-                        SwashContent::Color => GlyphContent::Color,
-                        SwashContent::SubpixelMask => continue,
-                    };
-                    glyphs.push(RasterizedGlyph {
-                        x: physical.x as f32 + image.placement.left as f32,
-                        y: run.line_y + physical.y as f32 - image.placement.top as f32,
-                        width: image.placement.width,
-                        height: image.placement.height,
-                        content,
-                        data: image.data.clone(),
-                    });
-                }
+            if metrics.width > 0 && metrics.height > 0 {
+                glyphs.push(RasterizedGlyph {
+                    x: x + metrics.xmin as f32,
+                    y: ascent - metrics.height as f32 - metrics.ymin as f32,
+                    width: metrics.width as u32,
+                    height: metrics.height as u32,
+                    content: GlyphContent::Mask,
+                    data: bitmap,
+                });
             }
+
+            x += metrics.advance_width;
         }
 
         glyphs
-    }
-
-    /// Get a mutable reference to the underlying `cosmic_text::FontSystem`.
-    pub fn inner_mut(&mut self) -> &mut CosmicFontSystem {
-        &mut self.font_system
     }
 }
 
@@ -151,9 +179,9 @@ impl Default for FontSystem {
 /// Describes the content format of a rasterized glyph's bitmap data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GlyphContent {
-    /// 8-bit alpha mask (1 byte per pixel grayscale coverage) — for normal text.
+    /// 8-bit alpha mask (1 byte per pixel grayscale coverage) -- for normal text.
     Mask,
-    /// 32-bit RGBA bitmap (4 bytes per pixel) — for color emoji.
+    /// 32-bit RGBA bitmap (4 bytes per pixel) -- for color emoji.
     Color,
 }
 
@@ -170,7 +198,7 @@ pub struct RasterizedGlyph {
     pub height: u32,
     /// The content format of the bitmap data.
     pub content: GlyphContent,
-    /// Coverage bitmap — either grayscale (1 byte/pixel) for [`GlyphContent::Mask`]
+    /// Coverage bitmap -- either grayscale (1 byte/pixel) for [`GlyphContent::Mask`]
     /// or RGBA (4 bytes/pixel) for [`GlyphContent::Color`].
     pub data: Vec<u8>,
 }
@@ -217,14 +245,14 @@ mod tests {
     }
 
     #[test]
-    fn bold_monospace_has_similar_width() {
+    fn bold_text_has_similar_width() {
         let mut fs = FontSystem::new();
         let (w_normal, _) = fs.measure_text("Hello", 16.0, false, false);
         let (w_bold, _) = fs.measure_text("Hello", 16.0, true, false);
-        // Monospace fonts should have identical or very similar widths
+        // Bold and normal should have similar widths for the same text
         let diff = (w_normal - w_bold).abs();
         assert!(
-            diff < w_normal * 0.15,
+            diff < w_normal * 0.25,
             "bold width ({w_bold}) should be similar to normal ({w_normal}), diff={diff}"
         );
     }
