@@ -34,6 +34,18 @@ const t = {
 } as const;
 
 // ---------------------------------------------------------------------------
+// Avatar colors per person
+// ---------------------------------------------------------------------------
+
+const AVATAR_COLORS: Record<string, string> = {
+  OM: "#7c3aed", // violet
+  JL: "#0ea5e9", // sky
+  IN: "#f59e0b", // amber
+  WK: "#22c55e", // green
+  SD: "#ec4899", // pink
+};
+
+// ---------------------------------------------------------------------------
 // Reusable card style (every card must use this)
 // ---------------------------------------------------------------------------
 
@@ -86,6 +98,7 @@ function Header({ active }: { active: Tab }) {
                 style={{
                   color: isActive ? t.foreground : t.mutedFg,
                   fontWeight: isActive ? "bold" : "normal",
+                  textDecoration: isActive ? "underline" : "none",
                 }}
               >
                 {tab}
@@ -96,6 +109,22 @@ function Header({ active }: { active: Tab }) {
       </Box>
       <Box style={{ flexGrow: 1 }} />
     </Box>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Separator
+// ---------------------------------------------------------------------------
+
+function Separator() {
+  return (
+    <Box
+      style={{
+        width: "100%",
+        height: 1,
+        backgroundColor: t.cardBorder,
+      }}
+    />
   );
 }
 
@@ -127,46 +156,54 @@ function MetricCard({
 }
 
 // ---------------------------------------------------------------------------
-// Revenue bar chart (Unicode block characters)
+// Revenue bar chart
 // ---------------------------------------------------------------------------
 
 const MONTHLY_REVENUE = [
   { month: "Jan", value: 4200 },
   { month: "Feb", value: 3800 },
-  { month: "Mar", value: 5100 },
-  { month: "Apr", value: 4600 },
-  { month: "May", value: 5800 },
-  { month: "Jun", value: 6200 },
-  { month: "Jul", value: 5400 },
-  { month: "Aug", value: 4900 },
-  { month: "Sep", value: 6800 },
-  { month: "Oct", value: 7200 },
-  { month: "Nov", value: 6100 },
-  { month: "Dec", value: 7800 },
+  { month: "Mar", value: 5500 },
+  { month: "Apr", value: 4700 },
+  { month: "May", value: 6300 },
+  { month: "Jun", value: 5800 },
+  { month: "Jul", value: 7100 },
+  { month: "Aug", value: 6500 },
+  { month: "Sep", value: 8000 },
+  { month: "Oct", value: 7400 },
+  { month: "Nov", value: 6800 },
+  { month: "Dec", value: 8500 },
 ];
 
 function RevenueChartCard() {
   const maxVal = Math.max(...MONTHLY_REVENUE.map((m) => m.value));
-  const barMaxHeight = 8;
+  const barMaxHeight = 12;
 
   return (
     <Box style={{ ...cardStyle, flexGrow: 2, gap: 1 }}>
       <Text style={{ color: t.foreground, fontWeight: "bold" }}>{"Overview"}</Text>
 
-      {/* Chart area */}
+      {/* Chart area -- bars rendered via backgroundColor + height */}
       <Box style={{ flexDirection: "row", alignItems: "end", gap: 1, height: barMaxHeight }}>
         {MONTHLY_REVENUE.map((m) => {
-          const height = Math.max(1, Math.round((m.value / maxVal) * barMaxHeight));
+          const barHeight = Math.max(1, Math.round((m.value / maxVal) * barMaxHeight));
           return (
             <Box
               key={m.month}
               style={{
+                width: 4,
                 flexGrow: 1,
-                height,
-                backgroundColor: t.foreground,
-                borderRadius: 2,
+                flexDirection: "column",
+                justifyContent: "end",
               }}
-            />
+            >
+              <Box
+                style={{
+                  height: barHeight,
+                  backgroundColor: "#fafafa",
+                  borderRadius: 2,
+                }}
+              />
+            </Box>
           );
         })}
       </Box>
@@ -174,11 +211,32 @@ function RevenueChartCard() {
       {/* Month labels */}
       <Box style={{ flexDirection: "row", gap: 1 }}>
         {MONTHLY_REVENUE.map((m) => (
-          <Box key={m.month} style={{ flexGrow: 1 }}>
+          <Box key={m.month} style={{ flexGrow: 1, width: 4 }}>
             <Text style={{ color: t.mutedFg }}>{m.month}</Text>
           </Box>
         ))}
       </Box>
+    </Box>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Avatar
+// ---------------------------------------------------------------------------
+
+function Avatar({ initials, color }: { initials: string; color: string }) {
+  return (
+    <Box
+      style={{
+        width: 4,
+        height: 2,
+        backgroundColor: color,
+        borderRadius: 16,
+        justifyContent: "center",
+        alignItems: "center",
+      }}
+    >
+      <Text style={{ color: "#fafafa", fontWeight: "bold" }}>{initials}</Text>
     </Box>
   );
 }
@@ -203,6 +261,7 @@ const RECENT_SALES: Sale[] = [
 ];
 
 function SaleRow({ sale }: { sale: Sale }) {
+  const avatarColor = AVATAR_COLORS[sale.initials] ?? t.accent;
   return (
     <Box
       style={{
@@ -212,18 +271,7 @@ function SaleRow({ sale }: { sale: Sale }) {
         gap: 2,
       }}
     >
-      <Box
-        style={{
-          width: 4,
-          height: 1,
-          backgroundColor: t.accent,
-          borderRadius: 4,
-          justifyContent: "center",
-          alignItems: "center",
-        }}
-      >
-        <Text style={{ color: t.mutedFg, fontWeight: "bold" }}>{sale.initials}</Text>
-      </Box>
+      <Avatar initials={sale.initials} color={avatarColor} />
       <Box style={{ flexDirection: "column", flexGrow: 1 }}>
         <Text style={{ color: t.foreground }}>{sale.name}</Text>
         <Text style={{ color: t.mutedFg }}>{sale.email}</Text>
@@ -235,7 +283,7 @@ function SaleRow({ sale }: { sale: Sale }) {
 
 function RecentSalesCard() {
   return (
-    <Box style={{ ...cardStyle, flexGrow: 1, gap: 1 }}>
+    <Box style={{ ...cardStyle, flexGrow: 1, gap: 1, padding: [2, 3] as [number, number] }}>
       <Text style={{ color: t.foreground, fontWeight: "bold" }}>{"Recent Sales"}</Text>
       <Text style={{ color: t.zinc500 }}>
         {"You made 265 sales this month."}
@@ -266,19 +314,19 @@ function OverviewPage() {
           title="Subscriptions"
           value="+2,350"
           description="+180.1% from last month"
-          icon="+"
+          icon="Users"
         />
         <MetricCard
           title="Sales"
           value="+12,234"
           description="+19% from last month"
-          icon="$"
+          icon="CCard"
         />
         <MetricCard
           title="Active Now"
           value="+573"
           description="+201 since last hour"
-          icon="@"
+          icon="Act"
         />
       </Box>
 
@@ -307,7 +355,7 @@ function Footer() {
       }}
     >
       <Text style={{ color: t.mutedFg }}>
-        {"←/→ navigate tabs   q quit"}
+        {"<-/-> navigate tabs   q quit"}
       </Text>
       <Box style={{ flexGrow: 1 }} />
     </Box>
@@ -347,6 +395,7 @@ export function App() {
       }}
     >
       <Header active={activeTab} />
+      <Separator />
       <OverviewPage />
       <Footer />
     </Box>
