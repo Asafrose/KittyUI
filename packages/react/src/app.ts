@@ -117,6 +117,8 @@ export interface AppOptions {
   debug?: boolean;
   /** Render mode: "auto" (default), "pixel" (force Kitty graphics), "cell" (text only). */
   renderMode?: "auto" | "pixel" | "cell";
+  /** Directory to save PNG screenshots of each frame (for visual testing). */
+  screenshotDir?: string;
 }
 
 /** Handle returned by `createApp()` for programmatic control. */
@@ -266,6 +268,18 @@ export const createApp = (
   }, FRAME_MS);
 
   // -----------------------------------------------------------------------
+  // 7b. Screenshot capture (visual testing harness)
+  // -----------------------------------------------------------------------
+  let screenshotTimer: ReturnType<typeof setInterval> | null = null;
+  if (options.screenshotDir) {
+    const fs = require("fs") as typeof import("fs");
+    fs.mkdirSync(options.screenshotDir, { recursive: true });
+    screenshotTimer = setInterval(() => {
+      bridge.saveScreenshot(`${options.screenshotDir}/latest.png`);
+    }, 500);
+  }
+
+  // -----------------------------------------------------------------------
   // 8. Handle terminal resize
   // -----------------------------------------------------------------------
   const resizeHandler = (): void => {
@@ -301,6 +315,9 @@ export const createApp = (
 
     // Stop render loop
     clearInterval(renderLoop);
+
+    // Stop screenshot timer
+    if (screenshotTimer) clearInterval(screenshotTimer);
 
     // Restore stdin
     if (process.stdin.isTTY) {

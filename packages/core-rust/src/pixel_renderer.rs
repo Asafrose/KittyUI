@@ -198,6 +198,22 @@ impl PixelRenderer {
         self.canvas.height
     }
 
+    /// Save the current canvas as a PNG file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the image buffer cannot be created or saved.
+    pub fn save_screenshot(&self, path: &str) -> Result<(), String> {
+        use ::image::ImageBuffer;
+        use ::image::Rgba;
+
+        let w = self.canvas.width;
+        let h = self.canvas.height;
+        let img = ImageBuffer::<Rgba<u8>, _>::from_raw(w, h, self.canvas.data.clone())
+            .ok_or("Failed to create image buffer")?;
+        img.save(path).map_err(|e| e.to_string())
+    }
+
     /// Paint the entire frame from a [`PaintTree`].  Returns the Kitty
     /// protocol bytes to write to the terminal -- only the row-tiles that
     /// actually changed since the previous frame.

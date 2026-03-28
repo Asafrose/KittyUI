@@ -59,6 +59,7 @@ const symbols = {
   get_cell_pixel_width: { args: [], returns: FFIType.u32 },
   get_cell_pixel_height: { args: [], returns: FFIType.u32 },
   set_render_mode: { args: [FFIType.u8], returns: FFIType.void },
+  save_screenshot: { args: [FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
 } as const;
 
 // -----------------------------------------------------------------------
@@ -343,6 +344,16 @@ export class Bridge {
     this.assertReady();
     const code = mode === "cell" ? 0 : mode === "pixel" ? 1 : 2;
     this.lib!.symbols.set_render_mode(code);
+  }
+
+  /**
+   * Save a screenshot of the current pixel-rendered frame to a PNG file.
+   * Returns 0 on success, -1 on save error, -2 if pixel renderer is not active.
+   */
+  saveScreenshot(path: string): number {
+    this.assertReady();
+    const buf = Buffer.from(path, "utf-8");
+    return this.lib!.symbols.save_screenshot(buf, buf.length);
   }
 
   /** Decode a raw event buffer and dispatch to listeners. */
