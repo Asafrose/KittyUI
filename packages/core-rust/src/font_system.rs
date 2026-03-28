@@ -59,7 +59,7 @@ impl FontSystem {
             cosmic_text::Style::Normal
         };
         let attrs = Attrs::new()
-            .family(Family::SansSerif)
+            .family(Family::Monospace)
             .weight(weight)
             .style(style);
 
@@ -99,7 +99,7 @@ impl FontSystem {
             cosmic_text::Style::Normal
         };
         let attrs = Attrs::new()
-            .family(Family::SansSerif)
+            .family(Family::Monospace)
             .weight(weight)
             .style(style);
 
@@ -217,15 +217,15 @@ mod tests {
     }
 
     #[test]
-    fn bold_has_similar_width() {
+    fn bold_monospace_has_similar_width() {
         let mut fs = FontSystem::new();
         let (w_normal, _) = fs.measure_text("Hello", 16.0, false, false);
         let (w_bold, _) = fs.measure_text("Hello", 16.0, true, false);
-        // With sans-serif fonts, bold variants can be noticeably wider
+        // Monospace fonts should have identical or very similar widths
         let diff = (w_normal - w_bold).abs();
         assert!(
-            diff < w_normal * 0.5,
-            "bold width ({w_bold}) should be within 50% of normal ({w_normal}), diff={diff}"
+            diff < w_normal * 0.15,
+            "bold width ({w_bold}) should be similar to normal ({w_normal}), diff={diff}"
         );
     }
 }
