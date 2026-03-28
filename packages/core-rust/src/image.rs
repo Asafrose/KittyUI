@@ -93,7 +93,9 @@ impl ImageData {
 
 /// Compress data with zlib.
 fn compress_zlib(data: &[u8]) -> io::Result<Vec<u8>> {
-    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    // Use fast compression (level 1) — for real-time frame rendering,
+    // CPU time matters more than compression ratio.
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::fast());
     encoder.write_all(data)?;
     encoder.finish()
 }
