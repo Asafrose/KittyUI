@@ -169,9 +169,9 @@ impl FontSystem {
             x += metrics.advance_width;
         }
 
-        // Centre glyphs vertically within the line height.
-        // Without this, text sits at the typographic baseline position which
-        // leaves a gap at the top and descender space at the bottom.
+        // Centre glyphs vertically within the font_size (= cell height).
+        // The font's line_height (ascent+descent+gap) is often larger than
+        // font_size, so we centre within font_size to match the cell grid.
         if !glyphs.is_empty() {
             let min_y = glyphs.iter().map(|g| g.y).fold(f32::MAX, f32::min);
             let max_y = glyphs
@@ -179,8 +179,8 @@ impl FontSystem {
                 .map(|g| g.y + g.height as f32)
                 .fold(0.0f32, f32::max);
             let text_height = max_y - min_y;
-            let line_height = line_metrics.map_or(font_size, |lm| lm.new_line_size);
-            let offset = (line_height - text_height) / 2.0 - min_y;
+            // Use font_size (cell height) as the target, not line_height
+            let offset = (font_size - text_height) / 2.0 - min_y;
             for g in &mut glyphs {
                 g.y += offset;
             }
