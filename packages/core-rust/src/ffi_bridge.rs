@@ -1874,14 +1874,13 @@ pub extern "C" fn render_frame() {
                         .font_system
                         .take()
                         .unwrap_or_else(crate::font_system::FontSystem::new);
-                    state.pixel_renderer =
-                        Some(PixelRenderer::new_with_font_system(
-                            state.cols as u32,
-                            state.rows as u32,
-                            cell_w,
-                            cell_h,
-                            fs,
-                        ));
+                    state.pixel_renderer = Some(PixelRenderer::new_with_font_system(
+                        state.cols as u32,
+                        state.rows as u32,
+                        cell_w,
+                        cell_h,
+                        fs,
+                    ));
                 }
 
                 if let Some(mut pr) = state.pixel_renderer.take() {
